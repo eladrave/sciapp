@@ -169,7 +169,7 @@ export function handleKnown(state, text, photoData = null, photoId = null) {
 }
 
 export async function interpret(env, state, text, context = {}) {
-  const sources = [...(context.sources||[]),...retrieve(text)].filter((s,i,a)=>a.findIndex(other=>other.url===s.url&&other.text===s.text)===i).slice(0,6);
+  const sources = (context.sources||retrieve(text)).filter((s,i,a)=>a.findIndex(other=>other.url===s.url&&other.text===s.text)===i).slice(0,6);
   if (!env.AI) return { kind: 'reply', content: sources.length ? sources.map(s => s.text).join('\n\n') : 'I can help log catheterization, supplies, medications, allergies, vitals, settings, and caregiver invitation drafts. Which would you like?', sources: sources.map(({ title, url }) => ({ title, url })) };
   const recent=state.messages.slice(-8);
   if(recent.at(-1)?.role==='user'&&recent.at(-1).content===text)recent.pop();

@@ -7,26 +7,25 @@ Cloudflare D1 remains the source of truth for medications, schedules, stock, all
 
 Workers AI `@cf/baai/bge-base-en-v1.5` supplies 768-dimensional embeddings; indexes use cosine distance. Original text lives in `retrieval_sources` and 500-character chunks in `retrieval_chunks`. Vectorize stores IDs, vectors and namespaces, without text metadata. A query embeds once, searches both collections, and hydrates up to five matches per collection above a 0.65 score. This threshold is an initial heuristic, not clinical validation. Source links accompany resource answers. Personal memory is historical context, never medical evidence or proof a dose was taken. Structured current records override it.
 
-Only signed-in accounts capture personal memory, enabled by default. Capture uses successful user chat turns of at least 20 characters, excluding common controls. Assistant guesses are not remembered. Existing retained user messages are backfilled; chats already removed by the old 100-message cap cannot be recovered. Old remembered statements can be stale or contradict newer ones. Users can inspect and remove them. The full medical event ledger continues separately.
+Only signed-in accounts capture personal memory, always enabled. Capture uses successful user chat turns of at least 20 characters, excluding common controls. Assistant guesses are not remembered. Existing retained user messages are backfilled; chats already removed by the old 100-message cap cannot be recovered. Old remembered statements can be stale or contradict newer ones. Users can inspect and remove inaccurate statements through conversation. There is no memory on/off setting. The full medical event ledger continues separately.
 
 ## Chat and button controls
 
-Settings has a Memory and resources card. Equivalent text or voice commands:
+Personal memory is automatic and does not appear in Settings. Text or voice commands include:
 
 - `Show my memories`, followed by `Forget memory 1` for a displayed entry.
-- `Turn memory off` or `Turn memory on`.
 - `Clear my memories`, followed by `Yes, clear my memories`.
 - `Show shared resources`.
 - Administrators: `Add shared resource`. The conversation asks for title, HTTPS source URL, and text, then requires `Publish shared resource`.
 
-Off stops new capture and private retrieval but retains existing memory. Re-enabling starts capture from that point; messages written while disabled are not backfilled. Clear removes original memory text from the retrieval tables immediately and tombstones chunks for asynchronous Vectorize deletion. D1 checks stop deleted text appearing during vector propagation. Original chat messages, confirmed records and provider backups are separate; clearing memory does not erase them. Existing deleted source IDs prevent cron from recreating the same message as memory. New messages may create new memories while enabled.
+Personal memory cannot be disabled through the UI, chat, old API routes, or persisted legacy flags. Clear removes original memory text from the retrieval tables immediately and tombstones chunks for asynchronous Vectorize deletion. D1 checks stop deleted text appearing during vector propagation. Original chat messages, confirmed records and provider backups are separate. Deleted source IDs and the capture cursor prevent cron from recreating cleared messages. New messages continue to be remembered.
 
 ## Administration and APIs
 
 Resource privileges live in server-managed `resource_admins(account_id)`. They are not granted by client email, role claims or user input. The operator grants a verified stable account using a D1 insertion; public repository configuration contains no owner identity.
 
 - `GET /api/memory`: enabled status and latest 100 memories.
-- `POST /api/memory/settings`: `{ "enabled": false }`.
+- `POST /api/memory/settings`: legacy route rejects changes with HTTP 409 (memory is always on).
 - `DELETE /api/memory`: `{ "confirm": true }`.
 - `DELETE /api/memory/:sourceId`: owner-only removal.
 - `POST /api/memory/search`: `{ "query": "my voice preferences" }`.
@@ -38,7 +37,7 @@ Resources accept supplied excerpts, with source URLs as citations. They do not f
 
 ## Reliability and deployment
 
-Migration `0004_retrieval.sql` is additive. `scripts/deploy.mjs` creates both indexes if absent and binds `PERSONAL_MEMORY`, `SHARED_RESOURCES`, and `AI`, preserving authentication and push secrets. Hostnames remain configured in deployment.json.
+Migration `0004_retrieval.sql` and `0005_admin.sql` are additive. `scripts/deploy.mjs` creates both indexes if absent and binds `PERSONAL_MEMORY`, `SHARED_RESOURCES`, and `AI`, preserving authentication and push secrets. Hostnames remain configured in deployment.json.
 
 D1 chunks act as a durable indexing queue. Request background work and the existing minute cron process jobs with leases, stable IDs and exponential retry. The cron rotates through four signed-in accounts to reconcile retained messages after interrupted requests. Indexing and deletion are eventually consistent. A user who generates more than 100 messages before reconciliation can exceed the recovery window after an archive failure. Vector outages degrade chat to recent structured context and the keyword seed collection. Log events contain operation/scope, not private text. Monitor pending jobs and retry counts in D1.
 

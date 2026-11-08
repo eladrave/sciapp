@@ -7,7 +7,7 @@ import { initialState } from '../worker/domain.js';
 test('personal API persists reviewed medicines separately, logs doses once and configures explicit reminders',async()=>{
  const mf=new Miniflare({workers:[{config:{name:'sciapp',compatibilityDate:'2026-11-08',compatibilityFlags:['nodejs_compat'],env:{DEBUG:{type:'text',value:'true'},DB:{type:'d1',id:'DB'},PHOTOS:{type:'r2',name:'PHOTOS'}},manifest:{mainModule:'worker.js',modulesRoot:process.cwd(),modules:{'worker.js':{type:'esm',contents:await readFile('dist/worker.js','utf8')}}}}}]});
  try{
-  const db=await mf.getD1Database('DB');for(const name of ['0001_initial.sql','0002_notifications.sql','0003_account_identities.sql','0004_retrieval.sql'])await db.exec((await readFile(`migrations/${name}`,'utf8')).replace(/\n/g,' '));
+  const db=await mf.getD1Database('DB');for(const name of ['0001_initial.sql','0002_notifications.sql','0003_account_identities.sql','0004_retrieval.sql','0005_admin.sql'])await db.exec((await readFile(`migrations/${name}`,'utf8')).replace(/\n/g,' '));
   // Test-only session seeds an authenticated account identity without contacting Clerk.
   for(const label of ['a','b']){
    await db.prepare('INSERT INTO accounts VALUES (?,?,0,?)').bind(`clerk:test-${label}`,JSON.stringify(initialState({real:true})),new Date().toISOString()).run();

@@ -1,0 +1,95 @@
+import { AppError, now, uid } from './domain.js';
+import { processIndexJobs, resourceInput } from './retrieval.js';
+export const ADMIN_COOKIE='__Host-sciapp-admin';
+export const defaults={retrievalThreshold:0.65,resourceReviewDays:180};
+const bytes=text=>new TextEncoder().encode(text);
+const hex=data=>[...new Uint8Array(data)].map(v=>v.toString(16).padStart(2,'0')).join('');
+const unhex=text=>Uint8Array.from(text.match(/../g)||[],v=>parseInt(v,16));
+export const hash=async text=>hex(await crypto.subtle.digest('SHA-256',bytes(text)));
+const equal=async(a,b)=>crypto.subtle.timingSafeEqual(await crypto.subtle.digest('SHA-256',bytes(a)),await crypto.subtle.digest('SHA-256',bytes(b)));
+export async function verifyPassword(password,encoded){
+ const spec=JSON.parse(encoded);if(spec.iterations!==100000||!/^([a-f0-9]{2}){16,32}$/.test(spec.salt)||!/^[a-f0-9]{64}$/.test(spec.hash))throw Error('Invalid administrator configuration');
+ const key=await crypto.subtle.importKey('raw',bytes(password),'PBKDF2',false,['deriveBits']);
+ const result=await crypto.subtle.deriveBits({name:'PBKDF2',salt:unhex(spec.salt),iterations:spec.iterations,hash:'SHA-256'},key,256);
+ return equal(hex(result),spec.hash);
+}
+const cookie=token=>`${ADMIN_COOKIE}=${token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=${token?14400:0}`;
+async function session(request,env){
+ const token=(request.headers.get('cookie')||'').match(/(?:^|;\s*)__Host-sciapp-admin=([a-f0-9]{64})(?:;|$)/)?.[1];
+ if(!token||!env.ADMIN_PASSWORD_HASH)return null;
+ return env.DB.prepare('SELECT token_hash,csrf_token FROM admin_sessions WHERE token_hash=? AND expires_at>? AND auth_version=?').bind(await hash(token),Date.now(),await hash(env.ADMIN_PASSWORD_HASH)).first();
+}
+export async function systemSettings(env){const row=await env.DB.prepare("SELECT value_json,version FROM system_settings WHERE id='general'").first();return {settings:{...defaults,...(row?JSON.parse(row.value_json):{})},version:row?.version||0};}
+const audit=(env,action,target=null)=>env.DB.prepare('INSERT INTO admin_audit VALUES(?,?,?,?,?)').bind(uid(),'admin',action,target,now());
+async function throttle(request,env){
+ const ip=await hash(request.headers.get('CF-Connecting-IP')||'local');
+ for(const [key,max] of [[`admin-login:${ip}:${Math.floor(Date.now()/900000)}`,10],[`admin-login:global:${Math.floor(Date.now()/3600000)}`,100]]){
+  const row=await env.DB.prepare('INSERT INTO rate_limits(id,count,expires_at) VALUES(?,1,?) ON CONFLICT(id) DO UPDATE SET count=count+1 RETURNING count').bind(key,Date.now()+86400000).first();
+  if(row.count>max)throw new AppError('Too many sign-in attempts. Please try again later.',429);
+ }
+}
+export async function adminRoute(request,env,ctx,{json,bodyJSON,version}){
+ const url=new URL(request.url),path=url.pathname;
+ if(!path.startsWith('/api/admin/'))return null;
+ const mutation=!['GET','HEAD'].includes(request.method);
+ if(mutation&&request.headers.get('origin')!==url.origin)throw new AppError('Same-origin request required.',403);
+ if(path==='/api/admin/login'&&request.method==='POST'){
+  if(!env.ADMIN_PASSWORD_HASH)throw new AppError('Administrator sign-in is not configured.',503);
+  await throttle(request,env);const data=await bodyJSON(request);
+  if(!data||typeof data.username!=='string'||typeof data.password!=='string'||data.password.length>256||data.username.length>100)throw new AppError('Invalid username or password.',401);
+  const passwordValid=await verifyPassword(data.password,env.ADMIN_PASSWORD_HASH);const nameValid=await equal(data.username,'admin');
+  if(!passwordValid||!nameValid){await audit(env,'login_failed').run();throw new AppError('Invalid username or password.',401);}
+  const token=hex(crypto.getRandomValues(new Uint8Array(32))),csrf=hex(crypto.getRandomValues(new Uint8Array(32)));
+  await env.DB.batch([env.DB.prepare('DELETE FROM admin_sessions WHERE expires_at<?').bind(Date.now()),env.DB.prepare('INSERT INTO admin_sessions VALUES(?,?,?,?)').bind(await hash(token),csrf,await hash(env.ADMIN_PASSWORD_HASH),Date.now()+14400000),audit(env,'login')]);
+  return json({username:'admin',csrfToken:csrf},200,{'Set-Cookie':cookie(token)});
+ }
+ const admin=await session(request,env);if(!admin)throw new AppError('Administrator sign-in required.',401);
+ if(mutation&&!await equal(request.headers.get('X-Admin-CSRF')||'',admin.csrf_token))throw new AppError('Refresh the admin page before trying again.',403);
+ if(path==='/api/admin/session'&&request.method==='GET')return json({username:'admin',csrfToken:admin.csrf_token});
+ if(path==='/api/admin/logout'&&request.method==='POST'){await env.DB.batch([env.DB.prepare('DELETE FROM admin_sessions WHERE token_hash=?').bind(admin.token_hash),audit(env,'logout')]);return json({ok:true},200,{'Set-Cookie':cookie('')});}
+ if(path==='/api/admin/overview'&&request.method==='GET'){
+  const queue=await env.DB.prepare("SELECT scope,COUNT(*) AS chunks,SUM(CASE WHEN indexed_at IS NULL AND deleted_at IS NULL THEN 1 ELSE 0 END) AS pending,SUM(CASE WHEN attempts>0 THEN 1 ELSE 0 END) AS retrying FROM retrieval_chunks GROUP BY scope").all();
+  const config=await systemSettings(env);return json({appVersion:version,memoryPolicy:'Always on for every signed-in user',queue:queue.results,settings:config.settings,settingsVersion:config.version});
+ }
+ if(path==='/api/admin/settings'&&request.method==='PUT'){
+  const d=await bodyJSON(request),s=d?.settings;
+  if(!Number.isInteger(d?.version)||!s||Object.keys(s).some(k=>!Object.hasOwn(defaults,k))||typeof s.retrievalThreshold!=='number'||s.retrievalThreshold<0.6||s.retrievalThreshold>0.9||!Number.isInteger(s.resourceReviewDays)||s.resourceReviewDays<30||s.resourceReviewDays>730)throw new AppError('Use a retrieval threshold from 0.60 to 0.90 and a review interval from 30 to 730 days.');
+  await env.DB.prepare("INSERT OR IGNORE INTO system_settings VALUES('general',?,0)").bind(JSON.stringify(defaults)).run();
+  const result=await env.DB.batch([env.DB.prepare("UPDATE system_settings SET value_json=?,version=version+1 WHERE id='general' AND version=?").bind(JSON.stringify(s),d.version),audit(env,'settings_update_attempt')]);
+  if(result[0].meta.changes!==1)throw new AppError('Settings changed in another session. Refresh before saving.',409);
+  return json(await systemSettings(env));
+ }
+ if(path==='/api/admin/audit'&&request.method==='GET')return json({entries:(await env.DB.prepare('SELECT actor,action,target,created_at FROM admin_audit ORDER BY created_at DESC LIMIT 100').all()).results});
+ if(path==='/api/admin/resources'&&request.method==='GET')return json({resources:(await env.DB.prepare("SELECT s.id,s.title,s.url,s.body,s.created_at,COALESCE(p.status,'published') AS status,p.reviewed_at,p.reviewed_by,COALESCE(p.version,0) AS version FROM retrieval_sources s LEFT JOIN resource_publication p ON p.source_id=s.id WHERE s.scope='shared' AND s.deleted_at IS NULL ORDER BY s.created_at DESC").all()).results});
+ if(path==='/api/admin/resources'&&request.method==='POST'){
+  const d=resourceInput(await bodyJSON(request)),id='r-'+uid();
+  await env.DB.batch([env.DB.prepare("INSERT INTO retrieval_sources(id,scope,title,url,body,created_at) VALUES(?,'shared',?,?,?,?)").bind(id,d.title,d.url,d.text,now()),env.DB.prepare("INSERT INTO resource_publication(source_id,status,updated_at) VALUES(?,'draft',?)").bind(id,now()),audit(env,'resource_create_draft',id)]);
+  return json({id},201);
+ }
+ const target=path.match(/^\/api\/admin\/resources\/((?:seed-[a-z0-9-]+|r-[a-f0-9-]+))(?:\/(publish|archive|review))?$/);
+ if(target&&['PUT','POST'].includes(request.method)){
+  const [,id,action]=target;const row=await env.DB.prepare("SELECT s.id,s.title,s.url,s.body,COALESCE(p.status,'published') AS status,COALESCE(p.version,0) AS version FROM retrieval_sources s LEFT JOIN resource_publication p ON p.source_id=s.id WHERE s.id=? AND s.scope='shared' AND s.deleted_at IS NULL").bind(id).first();
+  if(!row)throw new AppError('Resource not found.',404);
+  const data=await bodyJSON(request);if(data?.version!==row.version)throw new AppError('This resource changed. Reload before saving.',409);
+  if(!action&&request.method==='PUT'){
+   if(row.status!=='draft')throw new AppError('Published resources are immutable. Create a revised draft, then archive the previous resource.',409);
+   const d=resourceInput(data),revision=uid();
+   const changes=await env.DB.batch([env.DB.prepare("UPDATE resource_publication SET version=version+1,revision_id=?,updated_at=? WHERE source_id=? AND status='draft' AND version=?").bind(revision,now(),id,data.version),env.DB.prepare("UPDATE retrieval_sources SET title=?,url=?,body=? WHERE id=? AND EXISTS(SELECT 1 FROM resource_publication WHERE source_id=? AND revision_id=?)").bind(d.title,d.url,d.text,id,id,revision),audit(env,'resource_edit_draft_attempt',id)]);
+   if(changes[0].meta.changes!==1)throw new AppError('This resource changed. Reload before saving.',409);
+   return json({ok:true});
+  }
+  if(action&&request.method==='POST'){
+   if(['publish','review'].includes(action)&&data.reviewed!==true)throw new AppError('Confirm that you reviewed this resource before publication.',400);
+   if(action==='publish'&&row.status!=='draft')throw new AppError('Only drafts can be published.',409);
+   if(action==='review'&&row.status!=='published')throw new AppError('Only published resources can be marked reviewed.',409);
+   const status=action==='archive'?'archived':'published',stamp=now(),revision=uid();
+   await env.DB.prepare('INSERT OR IGNORE INTO resource_publication(source_id,status,updated_at) VALUES(?,?,?)').bind(id,row.status,stamp).run();
+   const statements=[env.DB.prepare('UPDATE resource_publication SET status=?,reviewed_at=CASE WHEN ?=\'published\' THEN ? ELSE reviewed_at END,reviewed_by=CASE WHEN ?=\'published\' THEN \'admin\' ELSE reviewed_by END,updated_at=?,version=version+1,revision_id=? WHERE source_id=? AND version=?').bind(status,status,stamp,status,stamp,revision,id,data.version)];
+   if(action==='publish')for(const [i,chunk] of (row.body.match(/[\s\S]{1,500}/g)||[]).entries())statements.push(env.DB.prepare('INSERT OR IGNORE INTO retrieval_chunks(id,source_id,scope,body) SELECT ?,?,\'shared\',? WHERE EXISTS(SELECT 1 FROM resource_publication WHERE source_id=? AND revision_id=?)').bind(`${id}-${i}`,id,chunk,id,revision));
+   statements.push(audit(env,`resource_${action}_attempt`,id));const changes=await env.DB.batch(statements);
+   if(changes[0].meta.changes!==1)throw new AppError('This resource changed. Reload before saving.',409);
+   ctx.waitUntil(processIndexJobs(env,8));return json({ok:true});
+  }
+ }
+ throw new AppError('Administrator endpoint not found.',404);
+}
