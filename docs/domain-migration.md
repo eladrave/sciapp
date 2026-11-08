@@ -15,6 +15,6 @@ Current primary URL: https://sciapp.eladrave.com. The previous workers.dev origi
 
 ## Development to production authentication is a separate operation
 
-The current Clerk instance is still development until ownership is claimed and production is provisioned. A development-to-production instance change is not the same as a domain change. Development identities and sessions do not automatically become production identities. Preserve existing data and prepare an explicit verified old-ID to new-ID mapping before switching keys. Never attach medical records to a new identity using an unverified email supplied by the browser.
+The current Clerk instance is still development until production is provisioned (ownership is already claimed). A development-to-production instance change is not the same as a domain change. Development identities and sessions do not automatically become production identities. Preserve existing data and prepare an explicit verified old-ID to new-ID mapping before switching keys. Never attach medical records to a new identity using an unverified email supplied by the browser.
 
 Official references: [Cloudflare Worker Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/), [Clerk changing domains](https://clerk.com/docs/guides/development/deployment/changing-domains), [Clerk production deployment](https://clerk.com/docs/guides/development/deployment/production).

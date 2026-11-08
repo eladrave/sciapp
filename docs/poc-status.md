@@ -34,7 +34,7 @@ Catheter reminders fire once when due, then await another confirmed catheterizat
 
 ## Remaining production work
 
-Clerk is still an accountless development instance. Claim/configure a production instance, provide an owned domain/DNS and production OAuth credentials, and migrate existing development identities deliberately. Do not replace auth keys without an identity mapping, which would orphan existing records.
+The existing Clerk application has been claimed as sciapp in the owner’s personal workspace, preserving its development instance and keys. The owned app domain is connected. Configure a production instance and production OAuth credentials, then migrate existing development identities deliberately. Do not replace auth keys without an identity mapping, which would orphan existing records.
 
 Caregiver invitations remain drafts, without messages or access grants. No EHR/Health Connect/Bluetooth, native Android alarms, offline record synchronization, clinical monitoring, or WhatsApp connection exists. Formal privacy/security/service-term review, account deletion UX, restore testing and wider load/operational qualification remain launch work. The app is a personal beta, not a fully qualified healthcare production service.
 

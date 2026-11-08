@@ -1,6 +1,6 @@
 # Clerk setup for the POC
 
-Checked against official Clerk documentation on 2026-11-08. A dedicated accountless development application was provisioned with the official CLI. No human account sign-in or unrelated credentials were used.
+Checked against official Clerk documentation on 2026-11-08. A dedicated accountless development application was initially provisioned with the official CLI without account sign-in. Its later ownership claim reused the owner's existing browser identity. No unrelated application credentials were used.
 
 ## Development application
 
@@ -15,7 +15,13 @@ npx -y clerk@latest init --starter --framework react-router \
 
 The CLI completed with exit code 0 and produced development publishable and secret keys. Private local credential and claim files were restricted to mode 600. Their contents are excluded from this repository. Do not run this command again for this app, as it would create another instance. Keep `.clerk/`, environment files, and secret keys out of git.
 
-The application remains unclaimed. Later, follow the CLI's claim instructions using its retained `.clerk/keyless.json` metadata and `npx -y clerk@latest auth login`. The application name can be set to `sciapp` when claiming it. Renaming an application through the official Platform API requires account-level Platform API authorization, which the development instance secret does not provide. The instance was therefore not renamed.
+The original application was successfully claimed into the owner's personal Clerk workspace on 2026-11-08 and named `sciapp`. The Dashboard confirmed “Application was successfully claimed!” for the same original development instance. The existing instance and deployed keys were preserved. The single-use claim token has been consumed and must not be used again.
+
+The supported direct Dashboard claim flow, obtained from the official CLI's `open dashboard` implementation and retained accountless metadata, avoided a managed-environment CLI localhost callback limitation. The authenticated owner browser session completed the claim. No owner credentials were entered or copied.
+
+The [existing application Dashboard](https://dashboard.clerk.com/apps/app_3LpVf5GKSYlQLcyUAfyBK9pkf8V/instances/ins_3LpVf12ufx6m64WvQYmQBR5LTFq) now manages this instance. The public web origin is `https://sciapp.eladrave.com`; a custom web domain does not itself convert the Clerk development instance into a production instance.
+
+Production authentication has not been provisioned. A subsequent coordinated rollout must create the production instance on the selected owned domain, configure its DNS and its own Google OAuth credentials, and establish identity mapping before changing Worker keys. Development and production instances have separate user pools. No production key switch or user-record migration was attempted during the domain deployment. Keep a future domain configurable through deployment settings and review Clerk domain, DNS, OAuth redirects, CSP, and allowed origins together when it changes.
 
 ## Synthetic authentication checks
 
