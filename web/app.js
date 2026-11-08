@@ -43,6 +43,7 @@ function update(next) {
  }
  if (!state) return;
  if (!state.settings?.handsFree) { stopHandsFree(); handsFreePaused = false; }
+ syncVoiceControl();
  const scale = Math.max(1, Math.min(1.5, Number(state.settings?.textScale) || 1));
  document.documentElement.style.setProperty('--scale', scale);
  ui.avatar.textContent = (state.profile?.name || 'You').slice(0, 1).toUpperCase();
@@ -130,7 +131,7 @@ function renderPanel() {
   if (!events.length) panel.append(node('p','empty-state',today ? 'Nothing logged today yet. Every small step counts.' : 'Your confirmed activities will appear here.'));
   panel.append(chatButton('Log an activity','Log catheterization'));
  }
- if (activePage === 'Settings') { panel.append(panelHeader('Make this space yours.','You can change your preferences here, or just ask in the conversation.')); const sound = node('section','data-card setting-row'); const text = node('div'); text.append(node('h2','','Spoken replies'),node('p','',muted ? 'Off. Replies stay on screen.' : 'On. New replies are read aloud.')); sound.append(text,button(muted ? 'Turn on' : 'Mute','secondary',() => {setMute(!muted); renderPanel();})); panel.append(sound); const hands = node('section','data-card'); hands.append(node('h2','','Foreground hands-free'),node('p','',state.settings?.handsFree ? 'Enabled while this page is open. Your microphone status is shown below. Speech is sent after your chosen pause.' : 'Optional browser voice conversation while this page is open. No background listening.'),chatButton(state.settings?.handsFree ? 'Turn hands-free off' : 'Turn hands-free on',state.settings?.handsFree ? 'Turn hands-free off' : 'Turn hands-free on')); if(state.settings?.handsFree) hands.append(button(handsFreePaused ? 'Resume listening' : 'Pause listening','secondary',() => {handsFreePaused = !handsFreePaused; if(handsFreePaused) stopHandsFree(); else resumeHandsFree(); renderPanel();})); panel.append(hands); const access = node('section','data-card'); access.append(node('h2','','Comfort and access'),node('p','','Change text size, quiet hours, and other preferences through the conversation.'),chatButton('Set my preferences','Settings')); panel.append(access); const caregivers = node('section','data-card'); caregivers.append(node('h2','','Your support circle'),node('p','',`${state.caregivers?.length || 0} invitation draft${state.caregivers?.length === 1 ? '' : 's'}. No access granted yet.`),chatButton('Invite a caregiver','I want to add a caretaker to help me follow up on my activities')); panel.append(caregivers); const about = node('section','data-card'); about.append(node('h2','','About this preview'),node('p','','Synthetic-data preview. Do not enter real medical information or upload personal health photos. This companion helps organize care. It does not diagnose conditions or replace your care team.')); panel.append(about); }
+ if (activePage === 'Settings') { panel.append(panelHeader('Make this space yours.','You can change your preferences here, or just ask in the conversation.')); const sound = node('section','data-card setting-row'); const text = node('div'); text.append(node('h2','','Spoken replies'),node('p','',muted ? 'Off. Replies stay on screen.' : 'On. New replies are read aloud.')); sound.append(text,button(muted ? 'Turn on' : 'Mute','secondary',() => {setMute(!muted); renderPanel();})); panel.append(sound); const hands = node('section','data-card'); hands.append(node('h2','','Foreground hands-free'),node('p','',state.settings?.handsFree ? 'Enabled while this page is open. Your microphone status is shown below. Speech is sent after your chosen pause.' : 'Optional browser voice conversation while this page is open. No background listening.'),chatButton(state.settings?.handsFree ? 'Turn hands-free off' : 'Turn hands-free on',state.settings?.handsFree ? 'Turn hands-free off' : 'Turn hands-free on')); if(state.settings?.handsFree) hands.append(button(handsFreePaused ? 'Resume listening' : 'Pause listening','secondary',() => {toggleHandsFreePause();})); panel.append(hands); const access = node('section','data-card'); access.append(node('h2','','Comfort and access'),node('p','','Change text size, quiet hours, and other preferences through the conversation.'),chatButton('Set my preferences','Settings')); panel.append(access); const caregivers = node('section','data-card'); caregivers.append(node('h2','','Your support circle'),node('p','',`${state.caregivers?.length || 0} invitation draft${state.caregivers?.length === 1 ? '' : 's'}. No access granted yet.`),chatButton('Invite a caregiver','I want to add a caretaker to help me follow up on my activities')); panel.append(caregivers); const about = node('section','data-card'); about.append(node('h2','','About this preview'),node('p','','Synthetic-data preview. Do not enter real medical information or upload personal health photos. This companion helps organize care. It does not diagnose conditions or replace your care team.')); panel.append(about); }
 }
 async function undo(id) { if (busy) return; const generation = accountGeneration; setBusy(true); error(); stopHandsFree(); try { const result = await api(`/api/events/${encodeURIComponent(id)}/undo`,{method:'POST'}); receive(result); } catch(e) { if(e.name !== 'AbortError') error(e.message); } finally { if(generation === accountGeneration) {setBusy(false); ui.message.focus(); resumeHandsFree();} } }
 function removePhoto({deleteRemote = true} = {}) {
@@ -144,8 +145,9 @@ async function uploadPhoto(file) {
  try { const data = new FormData(); data.append('photo',file); photo = await api('/api/photos',{method:'POST',body:data}); ui['attachment-status'].textContent = 'Add a note, or send it as it is.'; }
  catch(e) { if(e.name !== 'AbortError') {removePhoto(); error(e.message);} } finally { if(generation === accountGeneration) {uploadBusy = false; ui['remove-photo'].disabled = false; setBusy(busy);} }
 }
-function resetRecording() { manualVoiceActive = false; recording = false; ui.composer.classList.remove('recording'); ui['voice-label'].textContent = 'Talk'; ui.voice.setAttribute('aria-label','Start voice recording'); ui['recording-status'].textContent = ''; recordStream?.getTracks().forEach(track => track.stop()); recordStream = null; setBusy(busy); }
+function resetRecording() { manualVoiceActive = false; recording = false; ui.composer.classList.remove('recording'); syncVoiceControl(); ui['recording-status'].textContent = ''; recordStream?.getTracks().forEach(track => track.stop()); recordStream = null; setBusy(busy); }
 async function toggleVoice() {
+ if (state?.settings?.handsFree) { toggleHandsFreePause(); return; }
  if (busy || uploadBusy) return;
  if (recording) { recorder ? recorder.stop() : recognition?.stop(); return; }
  error(); stopHandsFree(); manualVoiceActive = true; window.speechSynthesis?.cancel(); assistantSpeaking = false;
@@ -165,16 +167,36 @@ function browserVoice() {
  recognition.onend = () => { if(generation !== accountGeneration || voiceId !== voiceGeneration) return; resetRecording(); recognition = null; if (resultText) ui.message.focus(); };
  try { recognition.start(); recording = true; ui.composer.classList.add('recording'); ui['voice-label'].textContent = 'Stop'; ui.voice.setAttribute('aria-label','Stop browser voice input'); ui['recording-status'].textContent = 'Browser voice input'; setBusy(false); } catch { resetRecording(); error('Browser voice input could not start. Please type your message.'); }
 }
+function syncVoiceControl() {
+ const handsFree = Boolean(state?.settings?.handsFree);
+ ui['voice-label'].textContent = handsFree ? (handsFreePaused ? 'Listen' : 'Pause') : (recording ? 'Stop' : 'Talk');
+ ui.voice.setAttribute('aria-label', handsFree ? (handsFreePaused ? 'Resume listening' : 'Pause listening') : (recording ? 'Stop voice recording' : 'Start voice recording'));
+ if (handsFree && handsFreePaused) {
+  ui['recording-status'].textContent = 'Listening paused';
+  ui['composer-hint'].textContent = 'Microphone paused. Select Listen to resume. You can still type or send a photo.';
+ } else if (handsFree) {
+  ui['composer-hint'].textContent = 'Hands-free, while this page is open. Speech sends after your pause. Select Pause to stop listening.';
+ } else if (!recording) {
+  ui['composer-hint'].textContent = 'Type, talk, or send a photo. Review voice input before sending.';
+ }
+}
+function toggleHandsFreePause() {
+ handsFreePaused = !handsFreePaused;
+ if (handsFreePaused) stopHandsFree(); else { error(); resumeHandsFree(); }
+ syncVoiceControl();
+ if (activePage === 'Settings') renderPanel();
+}
 function stopHandsFree() {
  clearTimeout(silenceTimer); silenceTimer = null;
  if(handsFreeRecognition) { const current = handsFreeRecognition; handsFreeRecognition = null; current.onend = null; current.onresult = null; current.onerror = null; try {current.abort();} catch {} }
  handsFreeRunning = false;
- if(!manualVoiceActive && !recording) ui['recording-status'].textContent = '';
+ if(!manualVoiceActive && !recording) ui['recording-status'].textContent = state?.settings?.handsFree && handsFreePaused ? 'Listening paused' : '';
+ syncVoiceControl();
 }
 function resumeHandsFree() {
  if(!state?.settings?.handsFree || handsFreePaused || handsFreeRunning || assistantSpeaking || busy || uploadBusy || recording || manualVoiceActive || ui.app.hidden || document.visibilityState === 'hidden') return;
  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
- if(!SpeechRecognition) { handsFreePaused = true; error('Hands-free voice is unavailable in this browser. Use Talk for manual recording, or type your message.'); return; }
+ if(!SpeechRecognition) { handsFreePaused = true; syncVoiceControl(); error('Hands-free voice is unavailable in this browser. Turn hands-free off for manual Talk, or type your message.'); return; }
  const generation = accountGeneration; const current = new SpeechRecognition(); const draft = ui.message.value;
  handsFreeRecognition = current; current.lang = navigator.language || 'en-US'; current.continuous = true; current.interimResults = true;
  current.onresult = event => {
@@ -191,15 +213,15 @@ function resumeHandsFree() {
  };
  current.onerror = event => {
   if(generation !== accountGeneration || current !== handsFreeRecognition) return;
-  if(['not-allowed','service-not-allowed','audio-capture','network'].includes(event.error)) { handsFreePaused = true; stopHandsFree(); error(`Hands-free voice paused (${event.error}). Use Resume listening in Settings, manual Talk, or type.`); }
+  if(['not-allowed','service-not-allowed','audio-capture','network'].includes(event.error)) { handsFreePaused = true; stopHandsFree(); error(`Hands-free voice paused (${event.error}). Select Listen to retry, or type.`); }
  };
  current.onend = () => {
   if(generation !== accountGeneration || current !== handsFreeRecognition) return;
   handsFreeRecognition = null; handsFreeRunning = false;
   setTimeout(() => {if(generation === accountGeneration) resumeHandsFree();},250);
  };
- try { current.start(); handsFreeRunning = true; ui['recording-status'].textContent = 'Hands-free listening'; ui['composer-hint'].textContent = 'Hands-free, while this page is open. Speech sends after your pause. Pause listening in Settings.'; }
- catch { handsFreeRecognition = null; handsFreeRunning = false; handsFreePaused = true; error('Hands-free could not start. Choose Resume listening in Settings, or use manual Talk.'); }
+ try { current.start(); handsFreeRunning = true; ui['recording-status'].textContent = 'Hands-free listening'; syncVoiceControl(); }
+ catch { handsFreeRecognition = null; handsFreeRunning = false; handsFreePaused = true; syncVoiceControl(); error('Hands-free could not start. Select Listen to retry, or type.'); }
 }
 document.addEventListener('visibilitychange',() => {if(document.visibilityState === 'hidden') stopHandsFree(); else resumeHandsFree();});
 for (const navId of ['desktop-nav','mobile-nav']) { for (const page of Object.keys(icons)) { const el = button('',page === activePage ? 'active' : '',() => switchPage(page)); el.dataset.page = page; const svg = document.createElementNS('http://www.w3.org/2000/svg','svg'); svg.setAttribute('viewBox','0 0 24 24'); svg.setAttribute('aria-hidden','true'); svg.innerHTML = icons[page]; el.append(svg,node('span','',page)); el.setAttribute('aria-current',page === activePage ? 'page' : 'false'); document.getElementById(navId).append(el); } }

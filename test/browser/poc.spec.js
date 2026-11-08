@@ -15,3 +15,17 @@ test('foreground voice can propose and approve care without a send tap',async({p
  await page.evaluate(()=>window.__voiceTest.instance.onresult({results:[[{transcript:'I catheterized 450 mL'}]]}));await expect(page.getByRole('button',{name:'Approve',exact:true})).toBeVisible({timeout:10000});
  await page.evaluate(()=>window.__voiceTest.instance.onresult({results:[Object.assign([{transcript:'Approved.'}],{isFinal:true})]}));await expect(page.getByText('Saved. You have 59 catheters remaining.',{exact:true})).toBeVisible({timeout:10000});
 });
+test('hands-free composer button pauses and resumes without changing the setting',async({page})=>{
+ await page.addInitScript(()=>{window.__voiceTest={instance:null};window.SpeechRecognition=class{start(){window.__voiceTest.instance=this;}abort(){this.aborted=true;}stop(){this.onend?.();}};});
+ await start(page);await say(page,'Turn hands-free on');await page.getByRole('button',{name:'Approve',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Pause listening',exact:true})).toBeVisible();
+ await page.evaluate(()=>window.__voiceTest.instance.onresult({results:[Object.assign([{transcript:'Unsent draft'}],{isFinal:true})]}));
+ await page.getByRole('button',{name:'Pause listening',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Resume listening',exact:true})).toBeVisible();
+ await expect(page.getByText('Listening paused',{exact:true})).toBeVisible();
+ expect(await page.evaluate(()=>window.__voiceTest.instance.aborted)).toBe(true);
+ await page.waitForTimeout(5500);await expect(page.getByRole('textbox',{name:'Message your care companion'})).toHaveValue('Unsent draft');
+ expect(await page.evaluate(async()=> (await (await fetch('/api/state')).json()).settings.handsFree)).toBe(true);
+ await page.getByRole('button',{name:'Resume listening',exact:true}).click();
+ await expect(page.getByRole('button',{name:'Pause listening',exact:true})).toBeVisible();
+});

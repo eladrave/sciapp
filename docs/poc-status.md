@@ -42,3 +42,9 @@ Daily preview limits apply per client IP: 30 sessions, 150 chat requests, 60 AI/
 ## Voice confirmation fix (0.1.1)
 
 Natural short confirmations such as approved, yes please, confirmed, and go ahead resolve the current pending review directly. Repeated confirmations do not create another review or deduct supplies twice. Negated/uncertain replies are cancelled or clarified, and explicit volume corrections create a fresh review without saving the old value. Browser and server share the same decision grammar. Final recognized short confirmations use a 1.2-second send pause; interim or longer speech retains the configured pause.
+
+## Composer listening control (0.1.2)
+
+When foreground hands-free is enabled, the composer voice button shows Pause while listening is enabled and Listen while paused. Pause aborts speech recognition and clears the auto-send timer, preserves the draft and configured hands-free preference, and remains paused through replies and page visibility changes during the current page session. Settings uses the same pause control. Manual mode retains Talk. Recognition failures offer Listen to retry.
+
+Validation: all 16 Node tests passed, including three microphone lifecycle tests. A live 412 × 915 browser check with simulated speech verified recognition abort, no auto-send after 5.5 seconds, draft preservation, resume, and no horizontal overflow. The live health endpoint reports 0.1.2. This does not validate Android microphone hardware. A Playwright regression was added; the local Playwright suite remains blocked by the browser download issue described above.

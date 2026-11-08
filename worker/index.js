@@ -51,7 +51,7 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url); const path = url.pathname;
     try {
-      if (path === '/api/health') return json({ status: 'ok', version: '0.1.1', mode: 'synthetic-preview' });
+      if (path === '/api/health') return json({ status: 'ok', version: '0.1.2', mode: 'synthetic-preview' });
       if (path === '/api/config' && request.method === 'GET') return json({ clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null, mode: env.CLERK_PUBLISHABLE_KEY ? 'authenticated' : 'preview', features: { photos: true, transcription: !!env.AI, speech: false, caregivers: 'drafts', healthConnect: false }, notice: 'Synthetic-data preview. No real medical records, clinical alarms, or delivered caregiver invitations.' });
       if (!path.startsWith('/api/')) {
         if (!['GET','HEAD'].includes(request.method)) return json({ error: 'Method not allowed.' },405);
