@@ -5,6 +5,7 @@ import { migratePersonalState } from './domain.js';
 import { reminderTasks } from './reminders.js';
 import { reminderChat } from './reminder-chat.js';
 import { subscribe, unsubscribe, pushStatus, testPush, dispatchReminders } from './push.js';
+import { assistantAction } from './assistant-actions.js';
 import { handleKnown, interpret, analyzePhoto } from './conversation.js';
 import { configuredOrigins, contentSecurityPolicy, canonicalHome } from './origins.js';
 import { assets } from '../generated/assets.js';
@@ -76,7 +77,7 @@ export default {
       if (!configuredOrigins(env,url.origin).includes(url.origin))return json({error:'This hostname is not configured for SCIapp.'},421);
       const canonical=canonicalHome(request,env);
       if(canonical)return new Response(null,{status:302,headers:{...security,Location:canonical}});
-      if (path === '/api/health') return json({ status: 'ok', version: '0.3.0', mode: 'personal-beta' });
+      if (path === '/api/health') return json({ status: 'ok', version: '0.3.1', mode: 'personal-beta' });
       if (path === '/api/config' && request.method === 'GET') return json({ appOrigin:env.APP_ORIGIN||url.origin, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null, authEnvironment: env.CLERK_PUBLISHABLE_KEY?.startsWith('pk_live_') ? 'production' : 'development', pushPublicKey:env.VAPID_PUBLIC_KEY||null, mode: env.CLERK_PUBLISHABLE_KEY ? 'authenticated' : 'preview', features: { notifications: !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY), medications:true, photos: true, transcription: !!env.AI, speech: false, caregivers: 'drafts', healthConnect: false }, notice: 'Personal care beta. Medication and allergy records are user-entered. Notifications are reminders, not guaranteed clinical alarms. Caregiver invitations remain drafts.' });
       if (!path.startsWith('/api/')) {
         if (!['GET','HEAD'].includes(request.method)) return json({ error: 'Method not allowed.' },405);
@@ -135,11 +136,11 @@ export default {
         if(!reply) {
           await limit(request,env,'ai',60);
           try { const interpreted=await interpret(env,state,text);
-            if(interpreted.kind==='action' && interpreted.action) reply=proposal(state,interpreted.action.kind,interpreted.action.params||{});
+            if(interpreted.kind==='action' && interpreted.action) reply=assistantAction(state,text,interpreted.action);
             else reply=message('assistant',String(interpreted.content||'What would you like to record?').slice(0,4000),{sources:interpreted.sources||[],options:['Log catheterization','Add supplies','Settings']});
-          } catch(e) { if(e instanceof AppError)throw e; reply=message('assistant','The AI service is unavailable right now. You can still use the care logging buttons, record a reading, or enter supply counts.',{options:['Log catheterization','Add supplies','Record blood pressure']}); }
+          } catch(e) { if(e instanceof AppError)reply=message('assistant','I could not interpret that reliably. Nothing from this message was saved as a care action. Please tell me what you want to record.',{options:['Set medication reminders','Record medication','Settings']}); else reply=message('assistant','The AI service is unavailable right now. You can still use the care logging buttons, record a reading, or enter supply counts.',{options:['Log catheterization','Add supplies','Record blood pressure']}); }
         }
-        state.messages.push(reply); await store(env,id,state,version); return json({reply,state:view(state)});
+        state.messages.push(reply); await store(env,id,state,version); return json({reply,state:publicState(state)});
       }
       if (path === '/api/photos' && request.method === 'POST') {
         await limit(request,env,'photos',30);

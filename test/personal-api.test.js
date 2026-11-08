@@ -25,6 +25,11 @@ test('personal API persists reviewed medicines separately, logs doses once and c
   assert.deepEqual(state.medications[0].times,['08:00','20:00']);assert.ok(state.reminderTasks.length);
   await approve(await chat('I have 40 Sample Alpha tablets'));
   await approve(await chat('Use 1 tablet per dose for Sample Alpha'));
+  const pendingDose=await chat('I took Sample Alpha');
+  const clarification=await chat('No, This was just my schedule, so you can keep track of it, and remind me');
+  assert.match(clarification.reply.content,/What times/);assert.equal(clarification.state.medications[0].stock,40);assert.ok(Array.isArray(clarification.state.reminderTasks));
+  assert.equal(clarification.state.messages.find(m=>m.proposal?.id===pendingDose.reply.proposal.id).proposal.status,'cancelled');
+  await approve(await chat('08:00 and 20:00'));
   const dose=await chat('I took Sample Alpha');state=(await approve(dose)).state;assert.equal(state.medications[0].stock,39);
   const repeat=await approve(dose);assert.equal(repeat.state.medications[0].stock,39);
   await approve(await chat('I have 100 catheters'));

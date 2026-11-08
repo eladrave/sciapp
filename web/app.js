@@ -1,9 +1,11 @@
+import { createChatScroll } from './chat-scroll.js';
 import { confirmationDelay } from './conversation-controls.js';
 import { notificationStatus, enableNotifications, disableNotifications, detachBrowserNotifications, testNotification } from './notifications.js';
 const $ = (selector) => document.querySelector(selector);
 const ui = Object.fromEntries(['welcome','app','start-preview','sign-in','welcome-error','messages','message','composer','send','error','thinking','mute','mute-label','mute-icon','voice','voice-label','recording-status','photo','photo-input','attachment','attachment-image','attachment-status','remove-photo','panel','conversation','page-label','composer-area','avatar','date-label','composer-hint','account','announcer'].map(id => [id, document.getElementById(id)]));
 let state, config, activePage = 'Conversation', busy = false, photo = null, photoPreview, recorder, recordStream, recording = false, recognition, audioChunks = [], uploadBusy = false;
 let photoGeneration = 0, accountGeneration = 0, voiceGeneration = 0, silenceTimer, handsFreeRecognition, handsFreeRunning = false, assistantSpeaking = false, manualVoiceActive = false, handsFreePaused = false, speechGeneration = 0;
+const chatScroll = createChatScroll($('#main'),ui.messages,() => activePage === 'Conversation' && !ui.app.hidden);
 const pendingRequests = new Set();
 let approvalTimer, pushStatus = {supported:false,enabled:false,permission:'unknown'}, notificationBusy = false, pushServerStatus = null;
 function staleError() { const e = new Error('Account changed.'); e.name = 'AbortError'; return e; }
@@ -18,6 +20,7 @@ const icons = {
 };
 function node(tag, className, text) { const el = document.createElement(tag); if (className) el.className = className; if (text !== undefined) el.textContent = text; return el; }
 function button(text, className, handler) { const el = node('button', className, text); el.type = 'button'; el.addEventListener('click', handler); return el; }
+function focusComposer(explicit = false) { if (!ui.app.hidden && (!state?.settings?.handsFree || explicit) && (explicit || document.activeElement === ui.message)) ui.message.focus({preventScroll:true}); }
 function error(message) { ui.error.textContent = message || ''; ui.error.hidden = !message; }
 async function api(path, options = {}) {
  const generation = accountGeneration; const controller = new AbortController(); pendingRequests.add(controller);
@@ -34,7 +37,7 @@ async function api(path, options = {}) {
  return data;
  } finally { pendingRequests.delete(controller); }
 }
-function setBusy(value) { busy = value; ui.thinking.hidden = !value; ui.send.disabled = value || uploadBusy || recording; ui.message.disabled = value; ui.photo.disabled = value || uploadBusy; document.querySelectorAll('[data-action]').forEach(el => { el.disabled = value; }); }
+function setBusy(value) { busy = value; ui.thinking.hidden = !value; ui.send.disabled = value || uploadBusy || recording; ui.message.readOnly = value; ui.composer.setAttribute('aria-busy',String(value)); ui.photo.disabled = value || uploadBusy; document.querySelectorAll('[data-action]').forEach(el => { el.disabled = value; }); }
 function showApp(next) { ui.welcome.hidden = true; ui.app.hidden = false; update(next); resumeHandsFree(); refreshNotificationStatus(); if (new URL(location.href).searchParams.get('page') === 'Today') switchPage('Today'); }
 function update(next) {
  if (next) {
@@ -61,14 +64,15 @@ async function loadHistoricalPhoto(img, photoId, generation) {
   if (!response.ok) throw new Error('A saved photo could not be loaded.');
   const blob = await response.blob(); if (generation !== photoGeneration || !img.isConnected) return;
   const url = URL.createObjectURL(blob); historicalPhotoUrls.add(url); img.src = url;
- } catch(e) { if (generation === photoGeneration && img.isConnected) { img.replaceWith(node('p','error-text','Saved photo unavailable. Try reloading this page.')); error(e.message); } }
+ } catch(e) { if (generation === photoGeneration && img.isConnected) { const position = chatScroll.capture(); img.replaceWith(node('p','photo-message error-text','Saved photo unavailable. Try reloading this page.')); chatScroll.afterRender(position); error(e.message); } }
 }
 function renderMessages() {
+ const scrollPosition = chatScroll.capture();
  revokeHistoricalPhotos(); const generation = photoGeneration; const photoLoads = [];
  const fragment = document.createDocumentFragment();
  const messages = state.messages || [];
  for (const message of messages) {
-  const row = node('article', `message ${message.role === 'user' ? 'user' : 'assistant'}`);
+  const row = node('article', `message ${message.role === 'user' ? 'user' : 'assistant'}`); row.dataset.messageId = message.id;
   if (message.role !== 'user') { const mark = node('span','assistant-mark','✳'); mark.setAttribute('aria-hidden','true'); row.append(mark); }
   const body = node('div','message-body'); body.append(node('div','message-meta',message.role === 'user' ? 'YOU' : 'SCIAPP COMPANION'));
   body.append(node('p','message-text',message.content || ''));
@@ -83,7 +87,7 @@ function renderMessages() {
  }
  ui.messages.replaceChildren(fragment); photoLoads.forEach(load => load());
  clearTimeout(approvalTimer); const expiry = (state.messages || []).map(m => m.proposal).filter(p => p?.status === 'pending' && Date.parse(p.expiresAt) > Date.now()).map(p => Date.parse(p.expiresAt)); if (expiry.length) approvalTimer = setTimeout(renderMessages, Math.min(...expiry) - Date.now() + 50);
- if (activePage === 'Conversation') requestAnimationFrame(() => { const main = $('#main'); main.scrollTop = main.scrollHeight; });
+ chatScroll.afterRender(scrollPosition);
 }
 function proposalCard(proposal) {
  const expired = proposal.status === 'pending' && Date.parse(proposal.expiresAt) <= Date.now();
@@ -97,23 +101,23 @@ function proposalCard(proposal) {
 }
 function changesSound(proposal) { return proposal?.kind === 'settings' && proposal.changedSettings?.includes('muted'); }
 function replyText(reply) { if (!reply) return ''; return [reply.content, reply.proposal?.title, ...(reply.proposal?.details || []), reply.proposal?.status === 'pending' ? 'Say approve or cancel.' : ''].filter(Boolean).join('. '); }
-function receive(result, soundApproval = false) { update(result.state); if (soundApproval && typeof state.settings?.muted === 'boolean') setMute(state.settings.muted); const text = replyText(result.reply); ui.announcer.textContent = text; speak(text); }
+function receive(result, soundApproval = false) { if(activePage === 'Conversation') chatScroll.latest(); update(result.state); if (soundApproval && typeof state.settings?.muted === 'boolean') setMute(state.settings.muted); const text = replyText(result.reply); ui.announcer.textContent = text; speak(text); }
 async function act(id, decision) {
- if (busy) return; const generation = accountGeneration; const settingsApproval = decision === 'approve' && state.messages?.some(message => message.proposal?.id === id && changesSound(message.proposal)); setBusy(true); error(); stopHandsFree();
+ if (busy) return; const generation = accountGeneration; const settingsApproval = decision === 'approve' && state.messages?.some(message => message.proposal?.id === id && changesSound(message.proposal)); setBusy(true); error(); stopHandsFree(); chatScroll.latest();
  try { const result = await api(`/api/actions/${encodeURIComponent(id)}`,{method:'POST',body:JSON.stringify({decision})}); receive(result,settingsApproval); }
  catch(e) { if(e.name !== 'AbortError') error(e.message); }
- finally { if(generation === accountGeneration) { setBusy(false); ui.message.focus(); resumeHandsFree(); } }
+ finally { if(generation === accountGeneration) { setBusy(false); focusComposer(); resumeHandsFree(); } }
 }
 async function send(text = ui.message.value) {
  if (notificationCommand(text)) { await notificationAction(notificationCommand(text)); return; }
  if (busy || uploadBusy || recording) return;
- const content = text.trim(); if (!content && !photo) { ui.message.focus(); return; }
+ const content = text.trim(); if (!content && !photo) { focusComposer(true); return; }
  const generation = accountGeneration;
  const pendingSettings = new Set((state.messages || []).filter(message => changesSound(message.proposal) && message.proposal.status === 'pending').map(message => message.proposal.id));
  stopHandsFree();
- switchPage('Conversation'); setBusy(true); error();
+ switchPage('Conversation',{latest:true}); setBusy(true); error();
  try { const result = await api('/api/chat',{method:'POST',body:JSON.stringify({message:content || 'Help me record this photo.',...(photo ? {photoId:photo.id} : {})})}); ui.message.value = ''; ui.message.style.height = ''; removePhoto({deleteRemote:false}); receive(result,state.messages?.some(message => pendingSettings.has(message.proposal?.id) && result.state.messages?.some(next => next.proposal?.id === message.proposal.id && next.proposal.status === 'approved'))); }
- catch(e) { if(e.name !== 'AbortError') error(e.message); } finally { if(generation === accountGeneration) { setBusy(false); ui.message.focus(); resumeHandsFree(); } }
+ catch(e) { if(e.name !== 'AbortError') error(e.message); } finally { if(generation === accountGeneration) { setBusy(false); focusComposer(); resumeHandsFree(); } }
 }
 function speak(text) {
  if (muted || new Date(state?.settings?.quietUntil || 0).getTime() > Date.now() || !text || !('speechSynthesis' in window)) { assistantSpeaking = false; resumeHandsFree(); return; }
@@ -122,7 +126,16 @@ function speak(text) {
  const done = () => { if(generation === accountGeneration && speechId === speechGeneration) {assistantSpeaking = false; resumeHandsFree();} }; utterance.onend = done; utterance.onerror = done; speechSynthesis.speak(utterance);
 }
 function setMute(value, persist = true) { muted = value; if (persist) localStorage.setItem('sciapp-muted',String(value)); if (value) { speechGeneration++; window.speechSynthesis?.cancel(); assistantSpeaking = false; resumeHandsFree(); } ui.mute.setAttribute('aria-pressed',String(value)); ui.mute.setAttribute('aria-label',value ? 'Turn on spoken replies' : 'Mute spoken replies'); ui['mute-label'].textContent = value ? 'Sound off' : 'Sound on'; ui['mute-icon'].textContent = value ? '◌' : '◖'; }
-function switchPage(page) { activePage = page; ui.conversation.hidden = page !== 'Conversation'; ui.panel.hidden = page === 'Conversation'; ui['page-label'].textContent = page; document.querySelectorAll('[data-page]').forEach(el => { el.classList.toggle('active',el.dataset.page === page); el.setAttribute('aria-current',el.dataset.page === page ? 'page' : 'false'); }); if (page !== 'Conversation') renderPanel(); if (page === 'Settings') refreshNotificationStatus(); $('#main').scrollTop = 0; }
+function switchPage(page, {latest = false} = {}) {
+ const previous = activePage;
+ if (previous === 'Conversation' && page !== previous) chatScroll.save();
+ activePage = page; ui.conversation.hidden = page !== 'Conversation'; ui.panel.hidden = page === 'Conversation'; ui['page-label'].textContent = page;
+ document.querySelectorAll('[data-page]').forEach(el => { el.classList.toggle('active',el.dataset.page === page); el.setAttribute('aria-current',el.dataset.page === page ? 'page' : 'false'); });
+ if (page !== 'Conversation') renderPanel();
+ if (page === 'Settings') refreshNotificationStatus();
+ if (page === 'Conversation') { if (latest) chatScroll.latest(); else if (previous !== page) chatScroll.restore(); }
+ else if (previous !== page) $('#main').scrollTop = 0;
+}
 function panelHeader(title, description) { const wrap = document.createDocumentFragment(); wrap.append(node('span','eyebrow','YOUR DAILY SPACE'),node('h1','',title),node('p','panel-intro',description)); return wrap; }
 function chatButton(text, prompt = text) { return button(text,'secondary',() => send(prompt)); }
 function careMedications() { return (state.medications || []).filter(med => med.active !== false); }
@@ -234,12 +247,12 @@ async function notificationAction(action) {
  } catch(e) { if (generation === accountGeneration) error(e.message); }
  finally { if (generation === accountGeneration) { notificationBusy = false; await refreshNotificationStatus(); } }
 }
-async function undo(id) { if (busy) return; const generation = accountGeneration; setBusy(true); error(); stopHandsFree(); try { const result = await api(`/api/events/${encodeURIComponent(id)}/undo`,{method:'POST'}); receive(result); } catch(e) { if(e.name !== 'AbortError') error(e.message); } finally { if(generation === accountGeneration) {setBusy(false); ui.message.focus(); resumeHandsFree();} } }
+async function undo(id) { if (busy) return; const generation = accountGeneration; setBusy(true); error(); stopHandsFree(); try { const result = await api(`/api/events/${encodeURIComponent(id)}/undo`,{method:'POST'}); receive(result); } catch(e) { if(e.name !== 'AbortError') error(e.message); } finally { if(generation === accountGeneration) {setBusy(false); focusComposer(); resumeHandsFree();} } }
 function removePhoto({deleteRemote = true} = {}) {
  const previous = photo; photo = null; if (photoPreview) URL.revokeObjectURL(photoPreview); photoPreview = null; ui.attachment.hidden = true; ui['photo-input'].value = ''; ui['attachment-image'].removeAttribute('src');
  if(deleteRemote && previous) api(`/api/photos/${encodeURIComponent(previous.id)}`,{method:'DELETE'}).catch(e => {if(e.name !== 'AbortError') error('The photo was detached, but could not be deleted. Please try again.');});
 }
-async function deleteSavedPhoto(id) { if(busy) return; const generation = accountGeneration; setBusy(true); try { await api(`/api/photos/${encodeURIComponent(id)}`,{method:'DELETE'}); state.photos = state.photos.filter(photo => photo.id !== id); for(const message of state.messages) if(message.photoId === id) { delete message.photoId; delete message.photoUrl; } update(state); ui.announcer.textContent = 'Photo deleted.'; } catch(e) {if(e.name !== 'AbortError') error(e.message);} finally {if(generation === accountGeneration) {setBusy(false); ui.message.focus();}} }
+async function deleteSavedPhoto(id) { if(busy) return; const generation = accountGeneration; setBusy(true); try { await api(`/api/photos/${encodeURIComponent(id)}`,{method:'DELETE'}); state.photos = state.photos.filter(photo => photo.id !== id); for(const message of state.messages) if(message.photoId === id) { delete message.photoId; delete message.photoUrl; } update(state); ui.announcer.textContent = 'Photo deleted.'; } catch(e) {if(e.name !== 'AbortError') error(e.message);} finally {if(generation === accountGeneration) {setBusy(false); focusComposer();}} }
 async function uploadPhoto(file) {
  if (!file) return; const generation = accountGeneration; error(); if (!['image/jpeg','image/png','image/webp'].includes(file.type)) { error('Choose a JPEG, PNG, or WebP photo.'); return; } if (file.size > 5 * 1024 * 1024) { error('This photo is too large. Please choose one under 5 MB.'); return; }
  removePhoto(); photoPreview = URL.createObjectURL(file); ui['attachment-image'].src = photoPreview; ui.attachment.hidden = false; ui['attachment-status'].textContent = 'Uploading photo…'; uploadBusy = true; ui['remove-photo'].disabled = true; setBusy(busy);
@@ -255,7 +268,7 @@ async function toggleVoice() {
  if (config?.features?.transcription === false) { browserVoice(); return; }
  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { browserVoice(); return; }
  const generation = accountGeneration; const voiceId = ++voiceGeneration; const draft = ui.message.value;
- try { const stream = await navigator.mediaDevices.getUserMedia({audio:true}); if(generation !== accountGeneration || voiceId !== voiceGeneration) {stream.getTracks().forEach(track => track.stop()); return;} recordStream = stream; recorder = new MediaRecorder(recordStream); audioChunks = []; recorder.addEventListener('dataavailable',event => { if (event.data.size) audioChunks.push(event.data); }); recorder.addEventListener('stop',async () => { if(generation !== accountGeneration || voiceId !== voiceGeneration) return; const mimeType = recorder.mimeType || 'audio/webm'; resetRecording(); recorder = null; setBusy(true); ui['recording-status'].textContent = 'Transcribing…'; try { const form = new FormData(); form.append('audio',new Blob(audioChunks,{type:mimeType}),'recording.webm'); const result = await api('/api/transcribe',{method:'POST',body:form}); ui.message.value = [draft,result.text || ''].filter(Boolean).join(' '); ui['composer-hint'].textContent = 'Review your words, then press Send.'; ui.message.focus(); if (!result.text) error('No words were detected. Try again or type your message.'); } catch(e) { if(e.name !== 'AbortError') error(`${e.message} You can type your message instead.`); } finally { if(generation === accountGeneration) {ui['recording-status'].textContent = ''; setBusy(false);} } }); recorder.start(); recording = true; ui.composer.classList.add('recording'); ui['voice-label'].textContent = 'Stop'; ui.voice.setAttribute('aria-label','Stop recording and transcribe'); ui['recording-status'].textContent = 'Listening…'; setBusy(false); }
+ try { const stream = await navigator.mediaDevices.getUserMedia({audio:true}); if(generation !== accountGeneration || voiceId !== voiceGeneration) {stream.getTracks().forEach(track => track.stop()); return;} recordStream = stream; recorder = new MediaRecorder(recordStream); audioChunks = []; recorder.addEventListener('dataavailable',event => { if (event.data.size) audioChunks.push(event.data); }); recorder.addEventListener('stop',async () => { if(generation !== accountGeneration || voiceId !== voiceGeneration) return; const mimeType = recorder.mimeType || 'audio/webm'; resetRecording(); recorder = null; setBusy(true); ui['recording-status'].textContent = 'Transcribing…'; try { const form = new FormData(); form.append('audio',new Blob(audioChunks,{type:mimeType}),'recording.webm'); const result = await api('/api/transcribe',{method:'POST',body:form}); ui.message.value = [draft,result.text || ''].filter(Boolean).join(' '); ui['composer-hint'].textContent = 'Review your words, then press Send.'; focusComposer(); if (!result.text) error('No words were detected. Try again or type your message.'); } catch(e) { if(e.name !== 'AbortError') error(`${e.message} You can type your message instead.`); } finally { if(generation === accountGeneration) {ui['recording-status'].textContent = ''; setBusy(false);} } }); recorder.start(); recording = true; ui.composer.classList.add('recording'); ui['voice-label'].textContent = 'Stop'; ui.voice.setAttribute('aria-label','Stop recording and transcribe'); ui['recording-status'].textContent = 'Listening…'; setBusy(false); }
  catch(e) { if(generation !== accountGeneration) return; resetRecording(); error(e.name === 'NotAllowedError' ? 'Microphone permission is off. Allow it in your browser, or type your message.' : 'The microphone could not start. You can type your message instead.'); }
 }
 function browserVoice() {
@@ -265,7 +278,7 @@ function browserVoice() {
  recognition = new SpeechRecognition(); recognition.lang = navigator.language || 'en-US'; recognition.interimResults = false; recognition.continuous = false; let resultText = '';
  recognition.onresult = event => { if(generation !== accountGeneration || voiceId !== voiceGeneration) return; resultText = Array.from(event.results).map(result => result[0].transcript).join(' '); ui.message.value = [draft,resultText].filter(Boolean).join(' '); ui['composer-hint'].textContent = 'Browser voice input. Review your words, then press Send.'; };
  recognition.onerror = event => { if(generation !== accountGeneration || voiceId !== voiceGeneration) return; error(`Browser voice input: ${event.error}. You can type your message instead.`); };
- recognition.onend = () => { if(generation !== accountGeneration || voiceId !== voiceGeneration) return; resetRecording(); recognition = null; if (resultText) ui.message.focus(); };
+ recognition.onend = () => { if(generation !== accountGeneration || voiceId !== voiceGeneration) return; resetRecording(); recognition = null; if (resultText) focusComposer(); };
  try { recognition.start(); recording = true; ui.composer.classList.add('recording'); ui['voice-label'].textContent = 'Stop'; ui.voice.setAttribute('aria-label','Stop browser voice input'); ui['recording-status'].textContent = 'Browser voice input'; setBusy(false); } catch { resetRecording(); error('Browser voice input could not start. Please type your message.'); }
 }
 function syncVoiceControl() {
@@ -338,7 +351,7 @@ ui.account.addEventListener('click',async () => {
   try { await api('/api/session',{method:'DELETE'}); await window.sciappSignOut(); showWelcomeAfterSignOut(); } catch(e) {error(e.message);}
  } else if (config?.clerkPublishableKey) await window.sciappSignIn();
 });
-function clearAccountWork() { notificationBusy = false; pushServerStatus = null; pushStatus = {supported:false,enabled:false,permission:'unknown'}; accountGeneration++; voiceGeneration++; pendingRequests.forEach(controller => controller.abort()); pendingRequests.clear(); clearTimeout(approvalTimer); stopHandsFree(); handsFreePaused = false; if(recognition) {recognition.onend = null; recognition.abort(); recognition = null;} if(recorder?.state === 'recording') recorder.stop(); recorder = null; audioChunks = []; recordStream?.getTracks().forEach(track => track.stop()); resetRecording(); assistantSpeaking = false; window.speechSynthesis?.cancel(); uploadBusy = false; setBusy(false); revokeHistoricalPhotos(); removePhoto({deleteRemote:false}); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; ui.announcer.textContent = ''; ui.app.hidden = true; ui.welcome.hidden = false; switchPage('Conversation'); }
+function clearAccountWork() { chatScroll.reset(); notificationBusy = false; pushServerStatus = null; pushStatus = {supported:false,enabled:false,permission:'unknown'}; accountGeneration++; voiceGeneration++; pendingRequests.forEach(controller => controller.abort()); pendingRequests.clear(); clearTimeout(approvalTimer); stopHandsFree(); handsFreePaused = false; if(recognition) {recognition.onend = null; recognition.abort(); recognition = null;} if(recorder?.state === 'recording') recorder.stop(); recorder = null; audioChunks = []; recordStream?.getTracks().forEach(track => track.stop()); resetRecording(); assistantSpeaking = false; window.speechSynthesis?.cancel(); uploadBusy = false; setBusy(false); revokeHistoricalPhotos(); removePhoto({deleteRemote:false}); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; ui.announcer.textContent = ''; ui.app.hidden = true; ui.welcome.hidden = false; switchPage('Conversation'); }
 function showWelcomeAfterSignOut() {
  clearAccountWork(); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; window.speechSynthesis?.cancel(); ui.app.hidden = true; ui.welcome.hidden = false; ui.account.hidden = true;
 }

@@ -1,4 +1,4 @@
-# Current status: personal care beta 0.3.0
+# Current status: personal care beta 0.3.1
 
 The primary domain is https://sciapp.eladrave.com, with the workers.dev origin retained for transition. Domain configuration and future migration steps are documented in domain-migration.md.
 
@@ -16,9 +16,9 @@ The live app uses real Cloudflare D1/R2 persistence with isolated Clerk account 
 
 ## Validation
 
-42 automated tests pass, including workerd/Miniflare personal-account API persistence/isolation, concurrent approvals, medication stock and unit validation, notification permission behavior, generic lock-screen content, retry/deduplication/expiry, and DST scheduling. JavaScript checks and build pass.
+47 automated tests pass, including workerd/Miniflare personal-account API persistence/isolation, concurrent approvals, medication stock and unit validation, notification permission behavior, generic lock-screen content, retry/deduplication/expiry, and DST scheduling. JavaScript checks and build pass.
 
-Live mobile browser checks at 412 × 915 verified generic medication/allergy import, review, explicit schedule, stock decrement once, reload persistence, Today rendering, and no horizontal overflow. Live health reports 0.3.0; notification configuration is enabled. The Cloudflare minute cron and additive D1 migration are installed.
+Live mobile browser checks at 412 × 915 verified generic medication/allergy import, review, explicit schedule, stock decrement once, reload persistence, Today rendering, and no horizontal overflow. Live health reports 0.3.1; notification configuration is enabled. The Cloudflare minute cron and additive D1 migration are installed.
 
 A live two-account Clerk smoke test also passed medication import/review, explicit schedules, stock deduction and replay safety, proposal isolation, push status and invalid-endpoint rejection. Both synthetic users and their D1 records were removed.
 
@@ -44,6 +44,14 @@ Personal photos stay private in R2 and are experimental inputs requiring review.
 
 The server-managed account_identities resolver preserves stable D1/R2 ownership after the Clerk identity change. The app never links accounts from a browser-provided email. The explicit administration script imports verified existing owners, uses an external identity marker, refuses ambiguous collisions, and requires --apply. After explicit approval, the real owner’s identity was imported and mapped without modifying its account snapshot during the identity operation. First production load also applied the existing personal-care schema upgrade, preserving history and recovering a previous bulk medication message as a pending review. This review was not approved automatically.
 
-Production smoke testing passed all nine grouped checks: reported0.3.0 and production environment, genuine origin-bearing sessions, separate personal spaces, approval-gated lists, cross-account proposal denial, explicit reminder times, exactly-once dose approval, invalid bearer rejection, and empty push subscriptions for fresh accounts. Both synthetic users and exactly two synthetic D1 accounts were removed, with zero matching rows remaining.
+Production smoke testing passed all nine grouped checks: reported0.3.1 and production environment, genuine origin-bearing sessions, separate personal spaces, approval-gated lists, cross-account proposal denial, explicit reminder times, exactly-once dose approval, invalid bearer rejection, and empty push subscriptions for fresh accounts. Both synthetic users and exactly two synthetic D1 accounts were removed, with zero matching rows remaining.
 
 The actual Google OAuth flow was also completed in the browser. It linked to the expected imported identity, returned to the app, and opened the existing history and conversation. Login did not approve medication or other care actions. Production Clerk SDK, mobile modal rendering and anonymous access rejection were checked. Logout cleared the client UI/session and anonymous /api/state returned401. Old workers.dev home navigation now redirects to the canonical domain without forwarding auth query parameters; API requests are not redirected. This validates authentication, not clinical qualification or physical phone notification delivery.
+
+## Conversation reliability update
+
+AI-generated actions now discard unset optional fields, validate explicit settings, and ask for clarification when malformed. Schedule descriptions cannot become taken doses. Reminder times require explicit user input. Recent AI context includes review-card details and does not duplicate the current utterance. Chat responses include computed reminder tasks.
+
+Conversation sends retain the latest turn instead of resetting to the top. Background re-renders preserve the visible message and offset, and the composer avoids forced keyboard focus. Three mobile browser regressions cover send/failure, navigation/expiry anchoring, and hands-free focus.
+
+Storage remains per-account versioned JSON in Cloudflare D1, with confirmed event history and the latest 100 chat messages; private photos are in R2. AI input uses the latest eight messages plus structured care data. Resource retrieval currently matches four curated summaries by keyword, without embeddings or a vector database.
