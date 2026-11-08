@@ -1,0 +1,5 @@
+{
+  "appOrigin": "https://sciapp.eladrave.com",
+  "additionalAppOrigins": ["https://sciapp.elad-rave-scm.workers.dev"],
+  "cloudflareZoneId": "aea3e02ae18550f64541c2d8e2c60f9a"
+}

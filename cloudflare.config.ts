@@ -1,6 +1,8 @@
 import { bindings, defineConfig } from 'cf/config';
 
-// Build first with npm run build. Photos and relational records are private bindings.
+// Build first with npm run build. scripts/deploy.mjs reads deployment.json
+// for the custom hostname and APP_ORIGIN / ADDITIONAL_APP_ORIGINS text bindings.
+// Photos and relational records are private bindings.
 export default defineConfig({
   worker: {
     name: 'sciapp',

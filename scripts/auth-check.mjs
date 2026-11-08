@@ -4,7 +4,8 @@ import { readFile, writeFile, chmod } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { createClerkClient } from '@clerk/backend';
 
-const origin = process.env.AUTH_CHECK_ORIGIN || 'https://sciapp.elad-rave-scm.workers.dev';
+const deployment=JSON.parse(await readFile(new URL('../deployment.json',import.meta.url),'utf8'));
+const origin = process.env.AUTH_CHECK_ORIGIN || deployment.appOrigin;
 const credentials = JSON.parse(await readFile(process.env.CLERK_CREDENTIALS_FILE || '/tmp/sciapp-clerk-credentials.json', 'utf8'));
 assert(credentials.CLERK_SECRET_KEY.startsWith('sk_test_'), 'Only development instances may be tested');
 const clerk = createClerkClient({ secretKey: credentials.CLERK_SECRET_KEY, publishableKey: credentials.CLERK_PUBLISHABLE_KEY });

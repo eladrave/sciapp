@@ -4,7 +4,7 @@ Accessible conversational care companion for people with spinal cord injuries.
 
 ## Status
 
-Personal care beta at **https://sciapp.elad-rave-scm.workers.dev** (0.2.0).
+Personal care beta at **https://sciapp.eladrave.com** (0.2.1).
 
 Clerk identities own isolated records in Cloudflare D1. Signed-in accounts have their own medications, allergies, inventory, settings, and confirmed care journal. The separate seven-day sample preview remains available. Clerk currently uses a development instance; this is not a completed production healthcare launch.
 
@@ -22,6 +22,8 @@ Sign in, paste a medication list as `name dose, frequency`, and approve the revi
 - In hands-free mode, Pause/Listen stops/resumes microphone recognition. Output sound is separate from microphone input.
 
 Reminders use a Cloudflare minute cron and Web Push, rather than an open-page timer. Delivery depends on the browser, network, and operating system. A push-service acceptance is not proof of delivery. Caregiver access, EHR, native Android alarms and WhatsApp remain unimplemented. See [current validation and limits](docs/poc-status.md).
+
+Domain settings live in `deployment.json`; see [moving domains later](docs/domain-migration.md). The workers.dev address remains a temporary fallback. Sign in again and enable notifications on the new origin; saved account records use the same database.
 
 ## Run locally
 

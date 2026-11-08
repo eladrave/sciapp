@@ -1,4 +1,6 @@
-# Current status: personal care beta 0.2.0
+# Current status: personal care beta 0.2.1
+
+The primary domain is https://sciapp.eladrave.com, with the workers.dev origin retained for transition. Domain configuration and future migration steps are documented in domain-migration.md.
 
 The live app uses real Cloudflare D1/R2 persistence with isolated Clerk account identities. Signed-in records now support medications, dosage/frequency labels, allergies, explicitly chosen schedules, confirmed dose logging, and per-medication inventory. The sample preview stays separate.
 
@@ -14,9 +16,9 @@ The live app uses real Cloudflare D1/R2 persistence with isolated Clerk account 
 
 ## Validation
 
-37 automated tests pass, including workerd/Miniflare personal-account API persistence/isolation, concurrent approvals, medication stock and unit validation, notification permission behavior, generic lock-screen content, retry/deduplication/expiry, and DST scheduling. JavaScript checks and build pass.
+39 automated tests pass, including workerd/Miniflare personal-account API persistence/isolation, concurrent approvals, medication stock and unit validation, notification permission behavior, generic lock-screen content, retry/deduplication/expiry, and DST scheduling. JavaScript checks and build pass.
 
-Live mobile browser checks at 412 × 915 verified generic medication/allergy import, review, explicit schedule, stock decrement once, reload persistence, Today rendering, and no horizontal overflow. Live health reports 0.2.0; notification configuration is enabled. The Cloudflare minute cron and additive D1 migration are installed.
+Live mobile browser checks at 412 × 915 verified generic medication/allergy import, review, explicit schedule, stock decrement once, reload persistence, Today rendering, and no horizontal overflow. Live health reports 0.2.1; notification configuration is enabled. The Cloudflare minute cron and additive D1 migration are installed.
 
 A live two-account Clerk smoke test also passed medication import/review, explicit schedules, stock deduction and replay safety, proposal isolation, push status and invalid-endpoint rejection. Both synthetic users and their D1 records were removed.
 
