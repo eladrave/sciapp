@@ -23,10 +23,15 @@ async function initialize(config) {
     if (!window.Clerk) throw new Error('Sign-in could not initialize.');
     await window.Clerk.load();
     let activeSession = null;
-    window.Clerk.addListener(({ session }) => {
+    window.Clerk.addListener(async ({ session }) => {
       const sessionId = session?.id || null;
       if (sessionId === activeSession) return;
+      const previousSession = activeSession;
       activeSession = sessionId;
+      if (previousSession && previousSession !== sessionId) {
+        try { await window.sciappBeforeAuthChange?.(); } catch (error) { window.dispatchEvent(new CustomEvent('sciapp:auth-error',{detail:{message:error.message}})); }
+      }
+      if (activeSession !== sessionId) return;
       window.dispatchEvent(new CustomEvent(sessionId ? 'sciapp:signed-in' : 'sciapp:signed-out'));
     });
     window.dispatchEvent(new CustomEvent('sciapp:auth-ready'));
@@ -47,6 +52,6 @@ window.sciappSignIn = async () => {
   }
 };
 window.sciappSignOut = async () => {
-  if (window.Clerk?.session) await window.Clerk.signOut();
+  if (window.Clerk?.session) { await window.sciappBeforeSignOut?.(); await window.Clerk.signOut(); }
 };
 window.addEventListener('sciapp:auth-config', event => { initialize(event.detail).catch(() => {}); });

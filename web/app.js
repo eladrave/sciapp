@@ -1,10 +1,11 @@
 import { confirmationDelay } from './conversation-controls.js';
+import { notificationStatus, enableNotifications, disableNotifications, detachBrowserNotifications, testNotification } from './notifications.js';
 const $ = (selector) => document.querySelector(selector);
 const ui = Object.fromEntries(['welcome','app','start-preview','sign-in','welcome-error','messages','message','composer','send','error','thinking','mute','mute-label','mute-icon','voice','voice-label','recording-status','photo','photo-input','attachment','attachment-image','attachment-status','remove-photo','panel','conversation','page-label','composer-area','avatar','date-label','composer-hint','account','announcer'].map(id => [id, document.getElementById(id)]));
 let state, config, activePage = 'Conversation', busy = false, photo = null, photoPreview, recorder, recordStream, recording = false, recognition, audioChunks = [], uploadBusy = false;
 let photoGeneration = 0, accountGeneration = 0, voiceGeneration = 0, silenceTimer, handsFreeRecognition, handsFreeRunning = false, assistantSpeaking = false, manualVoiceActive = false, handsFreePaused = false, speechGeneration = 0;
 const pendingRequests = new Set();
-let approvalTimer;
+let approvalTimer, pushStatus = {supported:false,enabled:false,permission:'unknown'}, notificationBusy = false, pushServerStatus = null;
 function staleError() { const e = new Error('Account changed.'); e.name = 'AbortError'; return e; }
 const historicalPhotoUrls = new Set();
 let muted = localStorage.getItem('sciapp-muted') !== 'false';
@@ -34,7 +35,7 @@ async function api(path, options = {}) {
  } finally { pendingRequests.delete(controller); }
 }
 function setBusy(value) { busy = value; ui.thinking.hidden = !value; ui.send.disabled = value || uploadBusy || recording; ui.message.disabled = value; ui.photo.disabled = value || uploadBusy; document.querySelectorAll('[data-action]').forEach(el => { el.disabled = value; }); }
-function showApp(next) { ui.welcome.hidden = true; ui.app.hidden = false; update(next); resumeHandsFree(); }
+function showApp(next) { ui.welcome.hidden = true; ui.app.hidden = false; update(next); resumeHandsFree(); refreshNotificationStatus(); if (new URL(location.href).searchParams.get('page') === 'Today') switchPage('Today'); }
 function update(next) {
  if (next) {
   if (state && next.settings?.muted !== state.settings?.muted && typeof next.settings?.muted === 'boolean') setMute(next.settings.muted);
@@ -46,10 +47,12 @@ function update(next) {
  syncVoiceControl();
  const scale = Math.max(1, Math.min(1.5, Number(state.settings?.textScale) || 1));
  document.documentElement.style.setProperty('--scale', scale);
+ const personal = state.mode === 'personal';
+ document.getElementById('mode-badge').textContent = personal ? 'Personal beta' : 'Sample preview';
  ui.avatar.textContent = (state.profile?.name || 'You').slice(0, 1).toUpperCase();
  renderMessages(); if (activePage !== 'Conversation') renderPanel();
 }
-function formatTime(value) { const date = new Date(value); return Number.isNaN(date.valueOf()) ? '' : date.toLocaleString([], { month:'short',day:'numeric',hour:'numeric',minute:'2-digit' }); }
+function formatTime(value) { const date = new Date(value); return Number.isNaN(date.valueOf()) ? '' : date.toLocaleString([], { month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZone:state?.settings?.timezone || undefined }); }
 function revokeHistoricalPhotos() { photoGeneration++; for (const url of historicalPhotoUrls) URL.revokeObjectURL(url); historicalPhotoUrls.clear(); }
 async function loadHistoricalPhoto(img, photoId, generation) {
  try {
@@ -72,7 +75,7 @@ function renderMessages() {
   if (message.photoId && state.photos?.some(photo => photo.id === message.photoId)) { const img = node('img','photo-message'); img.alt = 'Photo attached to this message'; body.append(img); photoLoads.push(() => loadHistoricalPhoto(img,message.photoId,generation)); body.append(button('Delete photo','secondary',() => deleteSavedPhoto(message.photoId))); }
   if (message.proposal) body.append(proposalCard(message.proposal));
   if (message.sources?.length) { const sources = node('div','sources'); sources.append(node('strong','','Learn more')); for (const source of message.sources) { try { const url = new URL(source.url); if (url.protocol !== 'https:') continue; const a = node('a','',source.title || url.hostname); a.href = url.href; a.target = '_blank'; a.rel = 'noopener noreferrer'; sources.append(a); } catch {} } body.append(sources); }
-  if (message.options?.length) { const options = node('div','quick-replies'); message.options.forEach(text => options.append(button(text,'',() => send(text)))); body.append(options); }
+  if (message.options?.length) { const options = node('div','quick-replies'); message.options.forEach(text => options.append(button(text,'',() => chooseReply(text)))); body.append(options); }
   row.append(body); fragment.append(row);
  }
  if (!messages.length) {
@@ -102,6 +105,7 @@ async function act(id, decision) {
  finally { if(generation === accountGeneration) { setBusy(false); ui.message.focus(); resumeHandsFree(); } }
 }
 async function send(text = ui.message.value) {
+ if (notificationCommand(text)) { await notificationAction(notificationCommand(text)); return; }
  if (busy || uploadBusy || recording) return;
  const content = text.trim(); if (!content && !photo) { ui.message.focus(); return; }
  const generation = accountGeneration;
@@ -118,20 +122,117 @@ function speak(text) {
  const done = () => { if(generation === accountGeneration && speechId === speechGeneration) {assistantSpeaking = false; resumeHandsFree();} }; utterance.onend = done; utterance.onerror = done; speechSynthesis.speak(utterance);
 }
 function setMute(value, persist = true) { muted = value; if (persist) localStorage.setItem('sciapp-muted',String(value)); if (value) { speechGeneration++; window.speechSynthesis?.cancel(); assistantSpeaking = false; resumeHandsFree(); } ui.mute.setAttribute('aria-pressed',String(value)); ui.mute.setAttribute('aria-label',value ? 'Turn on spoken replies' : 'Mute spoken replies'); ui['mute-label'].textContent = value ? 'Sound off' : 'Sound on'; ui['mute-icon'].textContent = value ? '◌' : '◖'; }
-function switchPage(page) { activePage = page; ui.conversation.hidden = page !== 'Conversation'; ui.panel.hidden = page === 'Conversation'; ui['page-label'].textContent = page; document.querySelectorAll('[data-page]').forEach(el => { el.classList.toggle('active',el.dataset.page === page); el.setAttribute('aria-current',el.dataset.page === page ? 'page' : 'false'); }); if (page !== 'Conversation') renderPanel(); $('#main').scrollTop = 0; }
+function switchPage(page) { activePage = page; ui.conversation.hidden = page !== 'Conversation'; ui.panel.hidden = page === 'Conversation'; ui['page-label'].textContent = page; document.querySelectorAll('[data-page]').forEach(el => { el.classList.toggle('active',el.dataset.page === page); el.setAttribute('aria-current',el.dataset.page === page ? 'page' : 'false'); }); if (page !== 'Conversation') renderPanel(); if (page === 'Settings') refreshNotificationStatus(); $('#main').scrollTop = 0; }
 function panelHeader(title, description) { const wrap = document.createDocumentFragment(); wrap.append(node('span','eyebrow','YOUR DAILY SPACE'),node('h1','',title),node('p','panel-intro',description)); return wrap; }
 function chatButton(text, prompt = text) { return button(text,'secondary',() => send(prompt)); }
+function careMedications() { return (state.medications || []).filter(med => med.active !== false); }
+function stockText(value,unit) { return value == null ? 'Stock not entered' : `${value} ${unit || 'units'} remaining`; }
+function appendMedicationCards(panel) {
+ const section = node('section','care-section'); section.setAttribute('aria-label','Medication list');
+ section.append(node('h2','section-heading','Medications'));
+ const meds = careMedications();
+ for (const med of meds) {
+  const card = node('article','data-card medication-card');
+  card.append(node('h3','',med.name),node('p','',`${med.dosage || 'Dose not entered'} · ${med.frequency || 'Frequency not entered'}${med.asNeeded ? ' · As needed' : ''}`));
+  card.append(node('p','',med.times?.length ? `Reminder times: ${med.times.join(', ')} (${state.settings.timezone})` : med.asNeeded ? 'As needed. No automatic dose reminders.' : 'Reminder times not set.'));
+  card.append(node('p','',stockText(med.stock,med.unit)));
+  if (med.unitsPerDose == null) card.append(node('p','','Units per dose not entered. Logging will not guess a pill count.'));
+  const actions = node('div','care-actions'); actions.append(chatButton('Record taken',`I took ${med.name}`));
+  if (!med.asNeeded) actions.append(chatButton('Set reminder times',`Set reminders for ${med.name}`));
+  card.append(actions); section.append(card);
+ }
+ if (!meds.length) section.append(node('p','empty-state','No personal medications added. Paste your list or add one through the conversation.'));
+ section.append(chatButton('Add medication','Add medication')); panel.append(section);
+ const allergies = node('section','data-card'); allergies.append(node('h2','','Allergies'));
+ if (state.allergies?.length) { const list = node('ul','care-list'); for (const item of state.allergies) list.append(node('li','',typeof item === 'string' ? item : item.name)); allergies.append(list); }
+ else allergies.append(node('p','','No allergy information entered. This does not mean no known allergies.'));
+ allergies.append(chatButton('Add allergies','Add allergies')); panel.append(allergies);
+}
+function appendReminders(panel) {
+ const card = node('section','data-card'); card.append(node('h2','','Upcoming reminders'));
+ card.append(node('p','',`Timezone: ${state.settings.timezone || 'Not set'}`));
+ const tasks = state.reminderTasks || [];
+ for (const task of tasks) card.append(node('p','',`${task.title} · ${formatTime(task.dueAt)}`));
+ if (!tasks.length) card.append(node('p','','No upcoming reminders. Set exact medication times or start catheterization reminders.'));
+ card.append(chatButton(state.settings.catheterRemindersEnabled ? 'Stop catheter reminders' : 'Start catheter reminders',state.settings.catheterRemindersEnabled ? 'Stop catheter reminders' : 'Start catheter reminders'));
+ card.append(chatButton('Set timezone','Change my timezone')); panel.append(card);
+}
 function renderPanel() {
  const panel = ui.panel; panel.replaceChildren();
- if (activePage === 'Supplies') { panel.append(panelHeader('A little peace of mind.','Your supplies, with counts updated only when you confirm an action.')); const grid = node('div','stat-grid'); for (const item of state.inventory || []) { const card = node('article','data-card'); card.append(node('h2','',item.name)); const count = node('div'); count.append(node('span','stock-number',String(item.count)),node('span','stock-unit',item.unit || 'remaining')); card.append(count); grid.append(card); } panel.append(grid,chatButton('Add a delivery','Add supplies')); if (!state.inventory?.length) panel.append(node('p','empty-state','No supplies added yet. Tell me what you have, or send a photo of a box.')); }
+ if (activePage === 'Supplies') {
+  panel.append(panelHeader('A little peace of mind.','Counts change only when you confirm an action. Unknown stock stays unknown until you enter it.'));
+  const grid = node('div','stat-grid');
+  for (const item of state.inventory || []) {
+   const card = node('article','data-card'); card.append(node('h2','',item.name));
+   const count = node('div'); count.append(node('span',item.count == null ? 'stock-unknown' : 'stock-number',item.count == null ? 'Not entered' : String(item.count)),node('span','stock-unit',item.unit || 'remaining')); card.append(count); if(item.id==='catheter')card.append(chatButton('Set current stock','Set catheter stock')); grid.append(card);
+  }
+  for (const med of careMedications()) {
+   const card = node('article','data-card'); card.append(node('h2','',med.name),node('p','',stockText(med.stock,med.unit)),chatButton('Set stock',`Set stock for ${med.name}`),chatButton('Units per dose',`Set units per dose for ${med.name}`)); grid.append(card);
+  }
+  panel.append(grid,chatButton('Add a delivery','Add supplies'));
+  if (!state.inventory?.length) panel.append(node('p','empty-state','No supplies added yet. Tell me what you have, or send a photo of a box.'));
+ }
  if (activePage === 'Today' || activePage === 'History') {
-  const today = activePage === 'Today'; panel.append(panelHeader(today ? 'Your day, at a glance.' : 'A record you can return to.',today ? 'Recent activity in your care journal. Scheduled reminders in this preview are shown in chat, not delivered in the background.' : 'Your confirmed activities. Undo a mistaken entry to correct the record.'));
-  let events = [...(state.events || [])]; if (today) events = events.filter(event => new Date(event.createdAt).toDateString() === new Date().toDateString());
+  const today = activePage === 'Today'; panel.append(panelHeader(today ? 'Your day, at a glance.' : 'A record you can return to.',today ? 'Your medication list, upcoming reminders, and confirmed care journal.' : 'Your confirmed activities. Undo a mistaken entry to correct the record.'));
+  if (today) { appendReminders(panel); appendMedicationCards(panel); panel.append(node('h2','section-heading','Today’s activity')); }
+  let events = [...(state.events || [])]; if (today) { const dateKey = date => new Intl.DateTimeFormat('en-CA',{timeZone:state.settings?.timezone || undefined}).format(date); events = events.filter(event => dateKey(new Date(event.createdAt)) === dateKey(new Date())); }
   for (const event of events) { const card = node('article',`data-card event-row${event.voided ? ' muted-event' : ''}`); const detail = node('div'); detail.append(node('h2','',event.title),node('p','',event.detail || ''),node('time','',`${formatTime(event.createdAt)}${event.voided ? ' · Undone' : ''}`)); card.append(detail); if (!event.voided && ['catheterization','supplies','medication','vitals','bag'].includes(event.kind)) card.append(button('Undo','secondary',() => undo(event.id))); panel.append(card); }
   if (!events.length) panel.append(node('p','empty-state',today ? 'Nothing logged today yet. Every small step counts.' : 'Your confirmed activities will appear here.'));
   panel.append(chatButton('Log an activity','Log catheterization'));
  }
- if (activePage === 'Settings') { panel.append(panelHeader('Make this space yours.','You can change your preferences here, or just ask in the conversation.')); const sound = node('section','data-card setting-row'); const text = node('div'); text.append(node('h2','','Spoken replies'),node('p','',muted ? 'Off. Replies stay on screen.' : 'On. New replies are read aloud.')); sound.append(text,button(muted ? 'Turn on' : 'Mute','secondary',() => {setMute(!muted); renderPanel();})); panel.append(sound); const hands = node('section','data-card'); hands.append(node('h2','','Foreground hands-free'),node('p','',state.settings?.handsFree ? 'Enabled while this page is open. Your microphone status is shown below. Speech is sent after your chosen pause.' : 'Optional browser voice conversation while this page is open. No background listening.'),chatButton(state.settings?.handsFree ? 'Turn hands-free off' : 'Turn hands-free on',state.settings?.handsFree ? 'Turn hands-free off' : 'Turn hands-free on')); if(state.settings?.handsFree) hands.append(button(handsFreePaused ? 'Resume listening' : 'Pause listening','secondary',() => {toggleHandsFreePause();})); panel.append(hands); const access = node('section','data-card'); access.append(node('h2','','Comfort and access'),node('p','','Change text size, quiet hours, and other preferences through the conversation.'),chatButton('Set my preferences','Settings')); panel.append(access); const caregivers = node('section','data-card'); caregivers.append(node('h2','','Your support circle'),node('p','',`${state.caregivers?.length || 0} invitation draft${state.caregivers?.length === 1 ? '' : 's'}. No access granted yet.`),chatButton('Invite a caregiver','I want to add a caretaker to help me follow up on my activities')); panel.append(caregivers); const about = node('section','data-card'); about.append(node('h2','','About this preview'),node('p','','Synthetic-data preview. Do not enter real medical information or upload personal health photos. This companion helps organize care. It does not diagnose conditions or replace your care team.')); panel.append(about); }
+ if (activePage === 'Settings') {
+  panel.append(panelHeader('Make this space yours.','You can change your preferences here, or just ask in the conversation.'));
+  const notifications = node('section','data-card'); notifications.append(node('h2','','Device notifications'));
+  notifications.append(node('p','',pushStatus.enabled ? (state.settings.notificationsEnabled===false ? 'This device is connected, but scheduled notifications are turned off for your account. Enable again to resume them.' : 'Enabled on this browser. Lock-screen messages contain no medication names or health details.') : pushStatus.permission === 'denied' ? 'Blocked in browser settings. Allow notifications for this site to enable reminders.' : 'Off on this device. Enable to receive reminders even when this page is closed.'));
+  if (pushServerStatus?.lastAcceptedAt) notifications.append(node('p','',`Last accepted by push service: ${formatTime(pushServerStatus.lastAcceptedAt)}`));
+  if (pushServerStatus?.lastError) notifications.append(node('p','error-text',`Latest delivery attempt: ${pushServerStatus.lastError}`));
+  notifications.append(node('p','','Delivery depends on your browser, connection, and device settings. Reminders are not emergency alarms.'));
+  const notifyActions = node('div','care-actions');
+  const enable = button('Enable notifications on this device','secondary',()=>notificationAction('enable')); enable.disabled = notificationBusy || !config?.features?.notifications || !window.Clerk?.session;
+  notifyActions.append(enable);
+  if (pushStatus.enabled) { const test = button('Send test notification','secondary',()=>notificationAction('test')); const off = button('Disable notifications on this device','secondary',()=>notificationAction('disable')); test.disabled = off.disabled = notificationBusy; notifyActions.append(test,off); }
+  if (!window.Clerk?.session) notifications.append(node('p','','Sign in to enable notifications for your personal account.'));
+  notifications.append(notifyActions); panel.append(notifications); appendReminders(panel);
+  const sound = node('section','data-card setting-row'); const text = node('div'); text.append(node('h2','','Spoken replies'),node('p','',muted ? 'Off. Replies stay on screen.' : 'On. New replies are read aloud.')); sound.append(text,button(muted ? 'Turn on' : 'Mute','secondary',() => {setMute(!muted); renderPanel();})); panel.append(sound);
+  const hands = node('section','data-card'); hands.append(node('h2','','Foreground hands-free'),node('p','',state.settings?.handsFree ? 'Enabled while this page is open. Your microphone status is shown below. Speech is sent after your chosen pause.' : 'Optional browser voice conversation while this page is open. No background listening.'),chatButton(state.settings?.handsFree ? 'Turn hands-free off' : 'Turn hands-free on',state.settings?.handsFree ? 'Turn hands-free off' : 'Turn hands-free on')); if(state.settings?.handsFree) hands.append(button(handsFreePaused ? 'Resume listening' : 'Pause listening','secondary',() => {toggleHandsFreePause();})); panel.append(hands);
+  const access = node('section','data-card'); access.append(node('h2','','Comfort and access'),node('p','','Change text size, quiet hours, and other preferences through the conversation.'),chatButton('Set my preferences','Settings')); panel.append(access);
+  const caregivers = node('section','data-card'); caregivers.append(node('h2','','Your support circle'),node('p','',`${state.caregivers?.length || 0} invitation draft${state.caregivers?.length === 1 ? '' : 's'}. No access granted yet.`),chatButton('Invite a caregiver','I want to add a caretaker to help me follow up on my activities')); panel.append(caregivers);
+  const about = node('section','data-card'); about.append(node('h2','',state.mode === 'personal' ? 'About this personal beta' : 'About this sample preview'),node('p','',state.mode === 'personal' ? 'Your records are saved to your signed-in account. This beta organizes your entered care plan; it does not prescribe, diagnose, or replace your care team. Caregiver invitations are still drafts.' : 'This separate preview uses sample supplies. Sign in to create your personal medication list and care journal.'));
+  if (config?.authEnvironment === 'development') about.append(node('p','','Sign-in currently uses a development environment. Production deployment and operational review remain in progress.'));
+  panel.append(about);
+ }
+}
+function notificationCommand(text) {
+ const command = String(text).trim().toLowerCase().replace(/[.!?]$/,'');
+ if (['enable notifications on this device','enable notifications','turn on notifications'].includes(command)) return 'enable';
+ if (['disable notifications on this device','disable notifications','turn off notifications'].includes(command)) return 'disable';
+ if (['send test notification','test notifications','test notification'].includes(command)) return 'test';
+ return null;
+}
+function chooseReply(text) { const command = notificationCommand(text); return command ? notificationAction(command) : send(text); }
+async function refreshNotificationStatus() {
+ const generation = accountGeneration;
+ try { const next = await notificationStatus(window.Clerk?.user?.id || window.Clerk?.session?.user?.id); const server = window.Clerk?.session ? await api('/api/push/status') : null; if (generation !== accountGeneration) return; pushServerStatus = server; pushStatus = next; if (activePage === 'Settings' && state) renderPanel(); } catch {}
+}
+async function notificationAction(action) {
+ if (notificationBusy) return;
+ if (!window.Clerk?.session) { error('Sign in before enabling personal notifications.'); return; }
+ if (action === 'enable' && navigator.userActivation && !navigator.userActivation.isActive) { switchPage('Settings'); error('Select Enable notifications on this device to allow the browser permission request.'); return; }
+ notificationBusy = true; error();
+ const generation = accountGeneration;
+ const notificationApi = (path,options) => { if (generation !== accountGeneration) throw staleError(); return api(path,options); };
+ try {
+  let next;
+  if (action === 'enable') next = await enableNotifications(notificationApi,config,window.Clerk?.user?.id || window.Clerk?.session?.user?.id);
+  else if (action === 'disable') next = await disableNotifications(notificationApi);
+  else await testNotification(notificationApi);
+  if (generation !== accountGeneration) return;
+  if (next) pushStatus = next;
+  if (action === 'enable') update(await notificationApi('/api/state'));
+  const text = action === 'test' ? 'Test notification sent to this device’s push service. Check the notification tray.' : action === 'enable' ? 'Notifications enabled on this device. Set your reminder times in the conversation.' : 'Notifications disabled on this device.';
+  ui.announcer.textContent = text; error(text);
+ } catch(e) { if (generation === accountGeneration) error(e.message); }
+ finally { if (generation === accountGeneration) { notificationBusy = false; await refreshNotificationStatus(); } }
 }
 async function undo(id) { if (busy) return; const generation = accountGeneration; setBusy(true); error(); stopHandsFree(); try { const result = await api(`/api/events/${encodeURIComponent(id)}/undo`,{method:'POST'}); receive(result); } catch(e) { if(e.name !== 'AbortError') error(e.message); } finally { if(generation === accountGeneration) {setBusy(false); ui.message.focus(); resumeHandsFree();} } }
 function removePhoto({deleteRemote = true} = {}) {
@@ -237,10 +338,12 @@ ui.account.addEventListener('click',async () => {
   try { await api('/api/session',{method:'DELETE'}); await window.sciappSignOut(); showWelcomeAfterSignOut(); } catch(e) {error(e.message);}
  } else if (config?.clerkPublishableKey) await window.sciappSignIn();
 });
-function clearAccountWork() { accountGeneration++; voiceGeneration++; pendingRequests.forEach(controller => controller.abort()); pendingRequests.clear(); clearTimeout(approvalTimer); stopHandsFree(); handsFreePaused = false; if(recognition) {recognition.onend = null; recognition.abort(); recognition = null;} if(recorder?.state === 'recording') recorder.stop(); recorder = null; audioChunks = []; recordStream?.getTracks().forEach(track => track.stop()); resetRecording(); assistantSpeaking = false; window.speechSynthesis?.cancel(); uploadBusy = false; setBusy(false); revokeHistoricalPhotos(); removePhoto({deleteRemote:false}); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; ui.announcer.textContent = ''; ui.app.hidden = true; ui.welcome.hidden = false; switchPage('Conversation'); }
+function clearAccountWork() { notificationBusy = false; pushServerStatus = null; pushStatus = {supported:false,enabled:false,permission:'unknown'}; accountGeneration++; voiceGeneration++; pendingRequests.forEach(controller => controller.abort()); pendingRequests.clear(); clearTimeout(approvalTimer); stopHandsFree(); handsFreePaused = false; if(recognition) {recognition.onend = null; recognition.abort(); recognition = null;} if(recorder?.state === 'recording') recorder.stop(); recorder = null; audioChunks = []; recordStream?.getTracks().forEach(track => track.stop()); resetRecording(); assistantSpeaking = false; window.speechSynthesis?.cancel(); uploadBusy = false; setBusy(false); revokeHistoricalPhotos(); removePhoto({deleteRemote:false}); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; ui.announcer.textContent = ''; ui.app.hidden = true; ui.welcome.hidden = false; switchPage('Conversation'); }
 function showWelcomeAfterSignOut() {
  clearAccountWork(); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; window.speechSynthesis?.cancel(); ui.app.hidden = true; ui.welcome.hidden = false; ui.account.hidden = true;
 }
+window.sciappBeforeSignOut = () => disableNotifications(api);
+window.sciappBeforeAuthChange = () => detachBrowserNotifications();
 window.addEventListener('sciapp:auth-ready',() => { ui.account.hidden = false; ui.account.textContent = window.Clerk?.session ? 'Sign out' : 'Sign in'; });
 window.addEventListener('sciapp:signed-out',showWelcomeAfterSignOut);
 window.addEventListener('sciapp:auth-error',event => { const message = event.detail?.message || 'Sign-in is unavailable. Please try again.'; ui['welcome-error'].textContent = message; if (!ui.app.hidden) error(message); });
@@ -250,3 +353,5 @@ try { config = await api('/api/config'); if (config.clerkPublishableKey) { ui['s
 catch(e) { ui.welcome.hidden = false; ui['welcome-error'].textContent = `Could not connect to sciapp. ${e.message}`; }
 window.addEventListener('sciapp:signed-in',async () => { clearAccountWork(); ui.account.hidden = false; ui.account.textContent = 'Sign out'; try { showApp(await api('/api/state')); } catch(e) { ui['welcome-error'].textContent = e.message; } });
 window.addEventListener('pagehide',() => { stopHandsFree(); revokeHistoricalPhotos(); recordStream?.getTracks().forEach(track => track.stop()); window.speechSynthesis?.cancel(); });
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message',event=>{if(event.data?.type==='sciapp:open-today' && state){switchPage('Today');api('/api/state').then(update).catch(e=>error(e.message));}});

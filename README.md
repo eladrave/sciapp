@@ -4,23 +4,24 @@ Accessible conversational care companion for people with spinal cord injuries.
 
 ## Status
 
-Working mobile-friendly web proof of concept, deployed at **https://sciapp.elad-rave-scm.workers.dev**.
+Personal care beta at **https://sciapp.elad-rave-scm.workers.dev** (0.2.0).
 
-This is a synthetic-data preview. Do not use it for real medical decisions, emergency monitoring, or real patient records.
+Clerk identities own isolated records in Cloudflare D1. Signed-in accounts have their own medications, allergies, inventory, settings, and confirmed care journal. The separate seven-day sample preview remains available. Clerk currently uses a development instance; this is not a completed production healthcare launch.
 
 ## Try it
 
-Open the preview and choose **Start private preview**, or use Clerk sign-in. Each preview gets a separate seven-day cookie session and isolated records.
+Sign in, paste a medication list as `name dose, frequency`, and approve the review. Add an Allergies heading with one allergy per line. Previously refused bulk lists may be recovered as pending reviews on first sign-in after upgrade. The app never infers reminder times or pill counts from a dosage label.
 
-- Type “I catheterized 350 mL”, review, and approve. Stock decreases only after approval.
-- Photograph a sample catheter-box label, confirm units per box and box count, then approve the delivery.
-- Record example medication use, blood pressure, and heart rate.
-- Ask for a shoulder-resource overview or information about SCI-specific UTI symptoms; answers link to the starter source collection.
-- Say/type “Make text larger”, “Mute”, “Wait 10 seconds”, or “Turn hands-free on”.
-- Use **Talk** to record and transcribe a voice draft. Optional hands-free mode uses browser speech recognition while the page is open. Actual support depends on the browser and microphone permission.
-- Review inventory/history and undo mistaken entries. Caregiver invitations are explicitly drafts; this preview does not send them or grant access.
+- “Remind me to take Sample medicine at 08:00 and 20:00” sets daily reminders after review.
+- “I have 60 Sample medicine tablets” configures current stock. “Use 1 tablet per dose for Sample medicine” configures consumption units explicitly.
+- “I took Sample medicine” records confirmed use. Only approval changes stock. PRN medicines do not receive routine dose reminders.
+- “I have 120 catheters” sets actual current inventory. Deliveries add to an already known balance; an unknown starting balance stays unknown until counted.
+- “Set catheter reminders every 4 hours” starts an interval clock now. The interval resets after each confirmed catheterization. Specify your care-plan interval.
+- Settings → Enable notifications on this device → allow browser permission → Send test notification. Alerts contain only a generic prompt to open the app.
+- “Show my medications”, “Show my allergies”, “Set my timezone to America/New_York”, “Make text larger”, “Mute”, and “Turn hands-free on” work in chat.
+- In hands-free mode, Pause/Listen stops/resumes microphone recognition. Output sound is separate from microphone input.
 
-Sound starts off. The sound button immediately stops spoken replies; it is separate from microphone input. Quiet replies do not imply that the microphone is off.
+Reminders use a Cloudflare minute cron and Web Push, rather than an open-page timer. Delivery depends on the browser, network, and operating system. A push-service acceptance is not proof of delivery. Caregiver access, EHR, native Android alarms and WhatsApp remain unimplemented. See [current validation and limits](docs/poc-status.md).
 
 ## Run locally
 
@@ -46,7 +47,7 @@ The browser tests simulate speech-recognition events; they do not prove micropho
 
 All application compute and storage use Cloudflare Workers, D1, R2, and Workers AI. Clerk provides identity; the Worker verifies its sessions and keeps care records separate.
 
-Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` privately, plus `CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` for first setup. Run:
+Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` privately, plus `CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` for first setup. Push uses stable P-256 `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` secret bindings. Preserve them across deployments; changing them requires devices to resubscribe. Run:
 
 ```sh
 npm run deploy

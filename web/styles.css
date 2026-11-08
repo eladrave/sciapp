@@ -11,3 +11,6 @@
 
 /* Reserve space for private photo previews so delayed downloads do not move the latest reply. */
 .photo-message{width:min(220px,100%);height:160px;object-fit:contain;object-position:left center;background:#fff}
+
+.care-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}.section-heading{font-size:20px;margin:28px 0 16px}.care-section{margin-bottom:24px}.care-list{line-height:1.8;padding-left:22px}.stock-unknown{font-size:20px;font-weight:600;color:#65775e}.medication-card h3{overflow-wrap:anywhere}.data-card>.secondary{margin:6px 8px 0 0}.data-card p,.data-card li{overflow-wrap:anywhere}
+@media(max-width:390px){.preview-badge{max-width:63px;padding:5px;font-size:8px}.topbar{padding:0 12px}.header-actions{gap:5px}}

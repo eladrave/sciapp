@@ -16,6 +16,8 @@ export default defineConfig({
       AI: bindings.ai(),
       CLERK_PUBLISHABLE_KEY: bindings.secret(),
       CLERK_SECRET_KEY: bindings.secret(),
+      VAPID_PUBLIC_KEY: bindings.secret(),
+      VAPID_PRIVATE_KEY: bindings.secret(),
     },
   },
 });

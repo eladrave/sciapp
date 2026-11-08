@@ -6,7 +6,7 @@ import { readFile } from 'node:fs/promises';
 test('Worker integration: private sessions, approval concurrency, persistence, undo, photo ownership, and CSRF',async()=>{
  const mf=new Miniflare({workers:[{config:{name:'sciapp',compatibilityDate:'2026-11-08',compatibilityFlags:['nodejs_compat'],env:{DEBUG:{type:'text',value:'true'},DB:{type:'d1',id:'DB'},PHOTOS:{type:'r2',name:'PHOTOS'}},manifest:{mainModule:'worker.js',modulesRoot:process.cwd(),modules:{'worker.js':{type:'esm',contents:await readFile('dist/worker.js','utf8')}}}}}]});
  try{
-  const db=await mf.getD1Database('DB');await db.exec((await readFile('migrations/0001_initial.sql','utf8')).replace(/\n/g,' '));
+  const db=await mf.getD1Database('DB');for(const name of ['0001_initial.sql','0002_notifications.sql'])await db.exec((await readFile(`migrations/${name}`,'utf8')).replace(/\n/g,' '));
   const req=async(path,method='GET',body,cookie,extra={})=>{ let payload=body, headers={...(cookie?{cookie}:{}),...extra}; if(body instanceof FormData){const encoded=new Response(body);headers['content-type']=encoded.headers.get('content-type');payload=await encoded.arrayBuffer();}else if(body){headers['content-type']='application/json';payload=JSON.stringify(body);} return mf.dispatchFetch(`https://sciapp.test${path}`,{method,headers,...(body?{body:payload}:{})}); };
   assert.equal((await req('/api/state')).status,401);
   let r=await req('/api/session','POST');assert.equal(r.status,200);const a=r.headers.get('set-cookie').split(';')[0];

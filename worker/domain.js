@@ -1,14 +1,30 @@
+import { medicationKey, findMedication, parseCareList } from './medications.js';
 export const now = () => new Date().toISOString();
 export const uid = () => crypto.randomUUID();
 export function message(role, content, extra = {}) { return { id: uid(), role, content, createdAt: now(), ...extra }; }
-export function initialState() {
+export function initialState({ real = false } = {}) {
   return {
-    profile: { name: 'You' },
-    inventory: [{ id: 'catheter', name: 'Example catheters', count: 60, unit: 'catheters' }, { id: 'medication', name: 'Example medication', count: 30, unit: 'tablets' }],
-    events: [], caregivers: [], settings: { muted: true, handsFree: false, voicePauseMs: 5000, textScale: 1, catheterIntervalHours: 4, timezone: 'America/New_York' },
-    messages: [message('assistant', 'Welcome. This is your private SCI care preview, with example supplies and medication. What would you like to try? Please use sample information while we test.', { options: ['Log catheterization', 'Add supplies', 'Record medication', 'Invite a caregiver'] })],
+    profile: { name: 'You' }, careSchemaVersion: real ? 2 : 1, mode: real ? 'personal' : 'preview', medications: [], allergies: [],
+    inventory: real ? [{ id: 'catheter', name: 'Catheters', count: null, unit: 'catheters' }] : [{ id: 'catheter', name: 'Example catheters', count: 60, unit: 'catheters' }, { id: 'medication', name: 'Example medication', count: 30, unit: 'tablets' }],
+    events: [], caregivers: [], settings: { muted: true, handsFree: false, voicePauseMs: 5000, textScale: 1, catheterIntervalHours: 4, timezone: 'America/New_York', notificationsEnabled: false, catheterRemindersEnabled: false },
+    messages: [message('assistant', real ? 'Welcome to your care space. Add your medication list and allergies, configure your own reminder times, or record care. Nothing is saved until you approve it.' : 'Welcome. This is your private SCI care preview, with example supplies and medication. What would you like to try? Please use sample information while we test.', { options: ['Log catheterization', 'Add supplies', 'Record medication', 'Invite a caregiver'] })],
     draft: null, photos: [], proposals: [], reminders: [],
   };
+}
+export function migratePersonalState(state) {
+ if (state.careSchemaVersion === 2) return false;
+ state.careSchemaVersion = 2; state.mode = 'personal'; state.medications ||= []; state.allergies ||= [];
+ // Synthetic historical entries remain visible as history. They never seed real stock.
+ state.inventory = state.inventory.filter(i => i.id !== 'medication');
+ const catheter = state.inventory.find(i => i.id === 'catheter');
+ if (catheter) { if(/^Example /i.test(catheter.name))catheter.name = 'Catheters'; catheter.count = null; for(const event of state.events)if(event.delta?.itemId==='catheter'){event.originalDelta=event.delta;event.delta=null;event.syntheticStock=true;} }
+ for(const event of state.events)if(event.delta?.itemId==='medication'){event.originalDelta=event.delta;event.delta=null;event.syntheticStock=true;}
+ for (const p of state.proposals) if (p.status === 'pending') { p.status = 'cancelled'; syncProposal(state, p); }
+ state.draft = null;
+ state.messages.push(message('assistant', 'Your signed-in care space now supports your own medication and allergy list. Example stock has been cleared; please enter your actual counts. Existing history is retained. Add your medications to begin.', {options:['Add medication', 'Show my medications']}));
+ const lastList=[...state.messages].reverse().find(m=>m.role==='user'&&/^(?:current |my )?medications?\s*:?\s*\n/i.test(m.content||''));
+ if(lastList && !state.medications.length){const parsed=parseCareList(lastList.content);if(parsed.medications.length && parsed.medications.length<=50 && parsed.allergies.length<=50 && !parsed.invalid.length && parsed.medications.every(m=>m.name.length<=200&&m.dosage.length<=200&&m.frequency.length<=200))state.messages.push(proposal(state,'carePlan',parsed));}
+ return true;
 }
 export class AppError extends Error { constructor(message, status = 400) { super(message); this.status = status; } }
 const string = (v, name, max = 300) => { if (typeof v !== 'string' || !v.trim() || v.length > max) throw new AppError(`Please provide a valid ${name}.`); return v.trim(); };
@@ -18,11 +34,43 @@ export function proposal(state, kind, params) {
   if (kind === 'catheterization') {
     params = { volume: params.volume == null ? null : number(params.volume, 'volume in mL', 0, 3000), photoId: params.photoId || null, time: params.time || now() };
     if (!Number.isFinite(Date.parse(params.time))) throw new AppError('Please provide a valid time.');
-    title = 'Record catheterization'; details = [params.volume == null ? 'Volume not recorded' : `${params.volume} mL`, 'Use one new catheter', 'Deduct 1 catheter from your supplies'];
+    title = 'Record catheterization'; details = [params.volume == null ? 'Volume not recorded' : `${params.volume} mL`, 'Use one new catheter', state.inventory.find(i=>i.id==='catheter')?.count==null?'Stock count not configured; record use without deducting a balance':'Deduct 1 catheter from your supplies'];
   } else if (kind === 'supplies') {
     params = { name: string(params.name || 'Catheters', 'product name'), boxes: number(params.boxes, 'number of boxes', 1, 1000), perBox: number(params.perBox, 'units per box', 1, 1000), photoId: params.photoId || null };
     if (!Number.isInteger(params.boxes) || !Number.isInteger(params.perBox)) throw new AppError('Box and unit counts must be whole numbers.');
     title = 'Add supply delivery'; details = [params.name, `${params.boxes} boxes × ${params.perBox} each`, `Add ${params.boxes * params.perBox} catheters`];
+  } else if (kind === 'catheterStock') {
+    params={count:number(params.count,'current catheter count',0,100000)};if(!Number.isInteger(params.count))throw new AppError('Catheter counts must be whole numbers.');
+    title='Set current catheter stock';details=[`Current total: ${params.count} catheters`,'Replace the previous balance with your counted total. This is not a delivery.'];
+  } else if (kind === 'carePlan') {
+    const medications = params.medications || [], allergies = params.allergies || [];
+    if (!Array.isArray(medications) || medications.length > 50 || !Array.isArray(allergies) || allergies.length > 50 || !(medications.length + allergies.length)) throw new AppError('Provide a medication or allergy list.');
+    params = { medications: medications.map(m => ({name:string(m.name,'medication name',200),dosage:string(m.dosage,'dose label',200),frequency:string(m.frequency,'frequency',200),asNeeded: /as needed|\bprn\b/i.test(m.frequency)})), allergies:allergies.map(a => string(a,'allergy',200)) };
+    if(new Set(params.medications.map(m=>medicationKey(m.name))).size !== params.medications.length)throw new AppError('The list includes the same medication more than once. Please resolve the duplicate first.');
+    title = 'Save medication and allergy list'; details = [...params.medications.map(m=>`${m.name}: ${m.dosage}, ${m.frequency}`), ...params.allergies.map(a=>`Allergy: ${a}`),'Store exactly as entered by you. Reminder times and stock counts need separate setup.'];
+  } else if (kind === 'medicationSchedule') {
+    const med = findMedication(state, params.medicationId || params.name);
+    if(!med)throw new AppError('Choose a medication from your list.');
+    if(med.asNeeded)throw new AppError('This medication is listed as needed. It will not generate routine dose reminders. You can log it when taken.');
+    if(!Array.isArray(params.times) || params.times.length > 12 || params.times.some(t=>typeof t!=='string'||!/^([01]\d|2[0-3]):[0-5]\d$/.test(t)))throw new AppError('Please provide reminder times, such as 08:00 and 20:00.');
+    params={medicationId:med.id,times:[...new Set(params.times)].sort()}; title='Set medication reminder times';details=[med.name,params.times.length ? `Daily at ${params.times.join(', ')} (${state.settings.timezone})` : 'Remove scheduled reminders','Reminder times are your choices, not a change to the prescribed regimen.'];
+  } else if (kind === 'medStock') {
+    const med = findMedication(state, params.medicationId || params.name);if(!med)throw new AppError('Choose a medication from your list.');
+    const stock = params.stock==null ? null : number(params.stock,'stock count',0,100000);const unit=string(params.unit || med.unit || 'units','stock unit',30);
+    if(!['tablets','capsules','suppositories','units','mL','puffs'].includes(unit))throw new AppError('Use tablets, capsules, suppositories, units, mL, or puffs for stock.');
+    params={medicationId:med.id,stock,unit,unitsPerDose:params.unitsPerDose == null ? null : number(params.unitsPerDose,'units used per dose',0.01,1000)};
+    title='Set medication stock';details=[med.name,stock==null?'Stock count not configured':`Current stock: ${stock} ${unit}`,params.unitsPerDose==null?'Units used per dose not set. I will ask when recording a dose.':`Deduct ${params.unitsPerDose} ${unit} per confirmed dose`];
+  } else if (kind === 'medicationRemove') {
+    const med = findMedication(state,params.medicationId||params.name);if(!med)throw new AppError('Choose a medication from your list.');
+    params={medicationId:med.id};title='Archive medication';details=[med.name,'Remove from the active list and stop its reminders. Preserve dose history.','This changes your tracking list, not a medical instruction to stop treatment.'];
+  } else if (kind === 'medication' && (state.mode === 'personal' || params.medicationId)) {
+    const med = findMedication(state,params.medicationId||params.name);if(!med)throw new AppError('Choose a medication from your list.');
+    const quantity=params.quantity==null?(med.unitsConfigured?med.unitsPerDose:null):number(params.quantity,'units used',0.01,1000);
+    if(params.unit!=null && params.unit!==med.unit)throw new AppError(`Your stock unit is ${med.unit}. Please confirm the quantity in that unit.`);
+    if(med.stock!=null && quantity==null)throw new AppError('How many units did you use? Set units per dose or include the quantity when logging.');
+    if(params.scheduledFor!=null&&!Number.isFinite(Date.parse(params.scheduledFor)))throw new AppError('Provide a valid scheduled dose time.');
+    params={medicationId:med.id,name:med.name,dosage:med.dosage,quantity,unit:med.unit,time:now(),...(params.scheduledFor?{scheduledFor:params.scheduledFor}:{})};
+    title=`Record ${med.name}`;details=[med.dosage,'Record as taken now',quantity==null?'Stock not configured; no stock deduction':`${quantity} ${med.unit} used${med.stock==null?'; stock not configured':'; deduct after approval'}`];
   } else if (kind === 'medication') {
     params = { quantity: number(params.quantity ?? 1, 'tablets taken', 0.25, 20), name: 'Example medication' };
     title = 'Record example medication'; details = [`${params.quantity} tablet(s) of Example medication`, 'Record as taken now', `Deduct ${params.quantity} tablet(s) from supplies`, 'Preview medication only; this is not a prescribed regimen'];
@@ -35,17 +83,20 @@ export function proposal(state, kind, params) {
     if (params.systolic == null && params.heartRate == null) throw new AppError('Please provide a blood pressure or heart-rate reading.');
     title = 'Save your reading'; details = [params.systolic == null ? null : `Blood pressure: ${params.systolic}/${params.diastolic} mmHg`, params.heartRate == null ? null : `Heart rate: ${params.heartRate} bpm`, 'Source: entered by you'].filter(Boolean);
   } else if (kind === 'settings') {
-    const allowed = ['muted', 'handsFree', 'voicePauseMs', 'textScale', 'quietUntil', 'catheterIntervalHours', 'name'];
+    const allowed = ['muted', 'handsFree', 'voicePauseMs', 'textScale', 'quietUntil', 'catheterIntervalHours', 'name', 'timezone', 'catheterRemindersEnabled', 'catheterStartAt', 'notificationsEnabled'];
     params = Object.fromEntries(Object.entries(params).filter(([k]) => allowed.includes(k)));
     if (!Object.keys(params).length) throw new AppError('Which setting would you like to change?');
     if ('muted' in params && typeof params.muted !== 'boolean') throw new AppError('Mute must be on or off.');
+    for (const key of ['catheterRemindersEnabled','notificationsEnabled']) if(key in params && typeof params[key]!=='boolean')throw new AppError('Reminder settings must be on or off.');
+    if('catheterStartAt' in params && !Number.isFinite(Date.parse(params.catheterStartAt)))throw new AppError('Provide a valid reminder start time.');
+    if('timezone' in params){try{new Intl.DateTimeFormat('en',{timeZone:params.timezone}).format();}catch{throw new AppError('Provide an IANA timezone, such as America/New_York.');}}
     if ('handsFree' in params && typeof params.handsFree !== 'boolean') throw new AppError('Hands-free must be on or off.');
     if ('voicePauseMs' in params) params.voicePauseMs = number(params.voicePauseMs, 'pause in milliseconds', 2000, 15000);
     if ('textScale' in params) params.textScale = number(params.textScale, 'text size', 1, 1.5);
     if ('catheterIntervalHours' in params) params.catheterIntervalHours = number(params.catheterIntervalHours, 'hours between reminders', 1, 24);
     if ('quietUntil' in params && params.quietUntil !== null && (!Number.isFinite(Date.parse(params.quietUntil)) || Date.parse(params.quietUntil) <= Date.now())) throw new AppError('Quiet time must end in the future.');
     if ('name' in params) params.name = string(params.name, 'name', 80);
-    title = 'Update your preferences'; details = Object.entries(params).map(([k, v]) => ({ muted: `Spoken replies ${v ? 'off' : 'on'}`, handsFree: `Hands-free browser voice ${v ? 'on' : 'off'} while this page is open`, voicePauseMs: `Wait ${Number(v)/1000} seconds after speech`, textScale: `Text size ${Math.round(Number(v) * 100)}%`, catheterIntervalHours: `Catheterization interval: ${v} hours`, quietUntil: v ? `Quiet until ${v}` : 'End timed quiet mode', name: `Call you ${v}` })[k]);
+    title = 'Update your preferences'; details = Object.entries(params).map(([k, v]) => ({ muted: `Spoken replies ${v ? 'off' : 'on'}`, handsFree: `Hands-free browser voice ${v ? 'on' : 'off'} while this page is open`, voicePauseMs: `Wait ${Number(v)/1000} seconds after speech`, textScale: `Text size ${Math.round(Number(v) * 100)}%`, catheterIntervalHours: `Catheterization interval: ${v} hours`, quietUntil: v ? `Quiet until ${v}` : 'End timed quiet mode', name: `Call you ${v}`, timezone: `Timezone: ${v}`, catheterRemindersEnabled: `Catheter reminders ${v?'on':'off'}`, notificationsEnabled: `Notifications ${v?'on':'off'}`, catheterStartAt: `Start catheter reminder clock: ${v}` })[k]);
   } else if (kind === 'caregiver') {
     params = { email: string(params.email, 'email address', 254), role: ['follow', 'record'].includes(params.role) ? params.role : 'follow' };
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(params.email)) throw new AppError('Please check the email address.');
@@ -67,17 +118,35 @@ export function finishProposal(state, id, decision) {
   if (decision === 'cancel') { p.status = 'cancelled'; syncProposal(state, p); return message('assistant', 'Cancelled. Your care records and supplies are unchanged.'); }
   const data = p.params;
   const event = { id: uid(), kind: p.kind, title: p.title, detail: p.details.join(' · '), createdAt: now(), occurredAt: data.time || now(), actor: state.profile.name, proposalId: p.id, delta: null, data: { ...data } };
-  if (p.kind === 'catheterization' || p.kind === 'supplies' || p.kind === 'medication') {
+  if (p.kind === 'catheterStock')state.inventory.find(i=>i.id==='catheter').count=data.count;
+  if (p.kind === 'carePlan') {
+    state.medications ||= [];state.allergies ||= [];
+    for (const med of data.medications) {
+      const old = state.medications.find(m=>medicationKey(m.name)===medicationKey(med.name)) || findMedication(state,med.name);
+      if(old){const changed=old.frequency!==med.frequency||old.dosage!==med.dosage;Object.assign(old,med,{active:true,updatedAt:now()});if(changed||med.asNeeded)old.times=[];if(changed){old.unitsConfigured=false;old.unitsPerDose=null;}}
+      else state.medications.push({id:uid(),...med,times:[],stock:null,unitsPerDose:null,unitsConfigured:false,unit:'units',active:true,createdAt:now(),updatedAt:now()});
+    }
+    for(const allergy of data.allergies)if(!state.allergies.some(a=>medicationKey(a)===medicationKey(allergy)))state.allergies.push(allergy);
+  }
+  if (p.kind === 'medicationSchedule') { const med=state.medications.find(m=>m.id===data.medicationId&&m.active!==false);if(!med)throw new AppError('This medication is no longer active.',409);med.times=data.times;med.updatedAt=now();med.scheduleUpdatedAt=now(); }
+  if (p.kind === 'medStock') { const med=state.medications.find(m=>m.id===data.medicationId&&m.active!==false);if(!med)throw new AppError('This medication is no longer active.',409);Object.assign(med,{stock:data.stock,unit:data.unit,unitsPerDose:data.unitsPerDose,unitsConfigured:data.unitsPerDose!=null,updatedAt:now()}); }
+  if (p.kind === 'medicationRemove') { const med=state.medications.find(m=>m.id===data.medicationId);med.active=false;med.times=[]; }
+  if (p.kind === 'medication' && data.medicationId) {
+    const med=state.medications.find(m=>m.id===data.medicationId&&m.active!==false);if(!med)throw new AppError('This medication is no longer active.',409);
+    if(med.stock!=null && data.quantity!=null){if(med.stock<data.quantity)throw new AppError('There is not enough medication stock. Correct your stock first.',409);med.stock-=data.quantity;event.delta={medicationId:med.id,quantity:-data.quantity};}
+  }
+  if (p.kind === 'catheterization' || p.kind === 'supplies' || (p.kind === 'medication' && !data.medicationId)) {
     const item = state.inventory.find(i => i.id === (p.kind === 'medication' ? 'medication' : 'catheter'));
     const delta = p.kind === 'supplies' ? data.boxes * data.perBox : p.kind === 'medication' ? -data.quantity : -1;
-    if (item.count + delta < 0) throw new AppError(`There are not enough ${item.unit} in your inventory. Correct your stock first.`, 409);
-    item.count += delta; if (p.kind === 'supplies') item.name = data.name;
-    event.delta = { itemId: item.id, quantity: delta };
+    if (item.count != null && item.count + delta < 0) throw new AppError(`There are not enough ${item.unit} in your inventory. Correct your stock first.`, 409);
+    if(item.count != null) {item.count += delta;event.delta = { itemId: item.id, quantity: delta };} else event.stockUntracked = true; if (p.kind === 'supplies') item.name = data.name;
   }
-  if (p.kind === 'settings') for (const [key, value] of Object.entries(data)) { if (key === 'name') state.profile.name = value; else state.settings[key] = value; }
+  if (p.kind === 'settings') for (const [key, value] of Object.entries(data)) { if (key === 'name') state.profile.name = value; else state.settings[key] = value; if(key==='timezone')state.settings.timezoneConfirmed=true; }
   if (p.kind === 'caregiver') state.caregivers.push({ id: uid(), ...data, status: 'draft', createdAt: now() });
   state.events.unshift(event); p.status = 'approved'; syncProposal(state, p);
-  const suffix = event.delta ? ` You have ${state.inventory.find(i => i.id === event.delta.itemId).count} ${state.inventory.find(i => i.id === event.delta.itemId).unit} remaining.` : '';
+  const stockItem=event.delta?.medicationId ? state.medications.find(m=>m.id===event.delta.medicationId) : state.inventory.find(i=>i.id===event.delta?.itemId);
+  const suffix = stockItem ? ` You have ${event.delta.medicationId?stockItem.stock:stockItem.count} ${stockItem.unit} remaining.` : '';
+  if(p.kind==='carePlan')return message('assistant','Medication and allergy list saved. Frequencies are stored exactly as entered. Reminder times and stock counts are not inferred. Which medication would you like to configure first?',{options:['Show my medications','Set medication reminders']});
   return message('assistant', (p.kind === 'caregiver' ? 'Invitation draft saved. It has not been sent, and no access has been granted.' : 'Saved.') + suffix, { options: ['What is next?', 'Show my supplies'] });
 }
 function syncProposal(state, p) { for (const m of state.messages) if (m.proposal?.id === p.id) m.proposal.status = p.status; }
@@ -87,9 +156,11 @@ export function undoEvent(state, id) {
   if (event.voided) return message('assistant', 'This record has already been undone.');
   if (!['catheterization', 'supplies', 'medication', 'vitals', 'bag'].includes(event.kind)) throw new AppError('Change this setting or invitation through the conversation instead.');
   if (event.delta) {
-    const item = state.inventory.find(i => i.id === event.delta.itemId);
-    if (item.count - event.delta.quantity < 0) throw new AppError('This delivery cannot be undone because some of its stock has been used. Correct the inventory through a new entry.', 409);
-    item.count -= event.delta.quantity;
+    const item = event.delta.medicationId ? state.medications.find(m=>m.id===event.delta.medicationId) : state.inventory.find(i => i.id === event.delta.itemId);
+    const countKey=event.delta.medicationId?'stock':'count';
+    if (!item || item[countKey]==null) throw new AppError('The original stock balance is no longer available. Correct this record through a new entry.',409);
+    if (item[countKey] - event.delta.quantity < 0) throw new AppError('This delivery cannot be undone because some of its stock has been used. Correct the inventory through a new entry.', 409);
+    item[countKey] -= event.delta.quantity;
   }
   event.voided = true; event.voidedAt = now();
   state.events.unshift({ id: uid(), kind: 'correction', title: 'Record undone', detail: `Reversed: ${event.title}`, createdAt: now(), actor: state.profile.name, targetId: id });

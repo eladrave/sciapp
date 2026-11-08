@@ -8,6 +8,10 @@
 - Keep conversation transcripts separate from authoritative care records.
 - Select a small implementation stack; add services as the relevant flow requires them.
 
+## Implemented beta architecture
+
+The Worker serves bundled assets and authenticated APIs. D1 accounts persist versioned state with compare-and-swap writes for care events, stock and approvals. Separate push_subscriptions and notification_deliveries tables hold exclusive device ownership and delivery claims. A minute scheduled handler generates local-time occurrences and dispatches encrypted generic Web Push. Private photos use R2; current inference uses Workers AI. No Durable Object, Queue, Workflow or Vectorize binding is currently deployed.
+
 ## Proposed service responsibilities
 
 | Service | Responsibility |
