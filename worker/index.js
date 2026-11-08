@@ -1,3 +1,4 @@
+import { retrievalReady, memoryChat, listMemory, forgetMemory, setMemory, retrieveContext, archiveMessages, backfillMemory, processIndexJobs, seedResources, syncMemoryAccounts, resourceAdmin, addResource } from './retrieval.js';
 import { accountIdForSubject } from './identity.js';
 import { createClerkClient } from '@clerk/backend';
 import { initialState, AppError, message, proposal, finishProposal, undoEvent, view, now, uid } from './domain.js';
@@ -70,15 +71,15 @@ async function limit(request, env, scope, max) {
 function attachmentOwner(state, photoId) { if (typeof photoId !== 'string' || !state.photos.some(p => p.id === photoId)) throw new AppError('Photo not found.', 404); }
 
 export default {
-  async scheduled(controller,env,ctx) { ctx.waitUntil(dispatchReminders(env,controller.scheduledTime)); },
+  async scheduled(controller,env,ctx) { ctx.waitUntil(dispatchReminders(env,controller.scheduledTime)); ctx.waitUntil((async()=>{if(retrievalReady(env)){await seedResources(env);await syncMemoryAccounts(env);await processIndexJobs(env,8);}})()); },
   async fetch(request, env, ctx) {
     const url = new URL(request.url); const path = url.pathname;
     try {
       if (!configuredOrigins(env,url.origin).includes(url.origin))return json({error:'This hostname is not configured for SCIapp.'},421);
       const canonical=canonicalHome(request,env);
       if(canonical)return new Response(null,{status:302,headers:{...security,Location:canonical}});
-      if (path === '/api/health') return json({ status: 'ok', version: '0.3.1', mode: 'personal-beta' });
-      if (path === '/api/config' && request.method === 'GET') return json({ appOrigin:env.APP_ORIGIN||url.origin, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null, authEnvironment: env.CLERK_PUBLISHABLE_KEY?.startsWith('pk_live_') ? 'production' : 'development', pushPublicKey:env.VAPID_PUBLIC_KEY||null, mode: env.CLERK_PUBLISHABLE_KEY ? 'authenticated' : 'preview', features: { notifications: !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY), medications:true, photos: true, transcription: !!env.AI, speech: false, caregivers: 'drafts', healthConnect: false }, notice: 'Personal care beta. Medication and allergy records are user-entered. Notifications are reminders, not guaranteed clinical alarms. Caregiver invitations remain drafts.' });
+      if (path === '/api/health') return json({ status: 'ok', version: '0.4.0', mode: 'personal-beta' });
+      if (path === '/api/config' && request.method === 'GET') return json({ appOrigin:env.APP_ORIGIN||url.origin, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null, authEnvironment: env.CLERK_PUBLISHABLE_KEY?.startsWith('pk_live_') ? 'production' : 'development', pushPublicKey:env.VAPID_PUBLIC_KEY||null, mode: env.CLERK_PUBLISHABLE_KEY ? 'authenticated' : 'preview', features: { notifications: !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY), memory:retrievalReady(env), resources:retrievalReady(env), medications:true, photos: true, transcription: !!env.AI, speech: false, caregivers: 'drafts', healthConnect: false }, notice: 'Personal care beta. Medication and allergy records are user-entered. Notifications are reminders, not guaranteed clinical alarms. Caregiver invitations remain drafts.' });
       if (!path.startsWith('/api/')) {
         if (!['GET','HEAD'].includes(request.method)) return json({ error: 'Method not allowed.' },405);
         const asset = assets[({ '/':'/index.html', '/privacy':'/privacy.html', '/terms':'/terms.html' })[path] || path];
@@ -115,7 +116,18 @@ export default {
         if(path==='/api/push/subscriptions'&&request.method==='DELETE'){const data=await bodyJSON(request);await unsubscribe(env,id,data.endpoint);return json({ok:true});}
         if(path==='/api/push/test'&&request.method==='POST'){await limit(request,env,'push-test',20);const data=await bodyJSON(request);return json(await testPush(env,id,data.endpoint));}
       }
-      if(path==='/api/account/export'&&request.method==='GET')return json(publicState((await load(env,id)).state),200,{'Content-Disposition':'attachment; filename="sciapp-records.json"'});
+      if(path.startsWith('/api/memory') || path.startsWith('/api/resources')) {
+        if(!retrievalReady(env))throw new AppError('Memory retrieval is not configured.',503);
+        if(path==='/api/resources' && request.method==='GET')return json({admin:await resourceAdmin(env,id),resources:(await env.DB.prepare("SELECT id,title,url,created_at FROM retrieval_sources WHERE scope='shared' AND deleted_at IS NULL ORDER BY created_at DESC").all()).results});
+        if(path==='/api/resources' && request.method==='POST'){await limit(request,env,'resource-publish',20);const result=await addResource(env,id,await bodyJSON(request));ctx.waitUntil(processIndexJobs(env,8));return json(result,201);}
+        if(!id.startsWith('clerk:'))throw new AppError('Sign in to use personal memory.',403);
+        if(path==='/api/memory' && request.method==='GET'){await backfillMemory(env,id,(await load(env,id)).state);ctx.waitUntil(processIndexJobs(env));return json(await listMemory(env,id));}
+        if(path==='/api/memory/settings' && request.method==='POST'){const data=await bodyJSON(request);if(typeof data.enabled!=='boolean')throw new AppError('Memory enabled must be true or false.');return json(await setMemory(env,id,data.enabled));}
+        if(path==='/api/memory' && request.method==='DELETE'){const data=await bodyJSON(request);if(data.confirm!==true)throw new AppError('Confirm clearing your memories.');await forgetMemory(env,id);ctx.waitUntil(processIndexJobs(env));return json({ok:true});}
+        const target=path.match(/^\/api\/memory\/(m-[a-f0-9]+)$/);if(target&&request.method==='DELETE'){await forgetMemory(env,id,target[1]);ctx.waitUntil(processIndexJobs(env));return json({ok:true});}
+        if(path==='/api/memory/search' && request.method==='POST'){await limit(request,env,'memory-search',50);const data=await bodyJSON(request);if(typeof data.query!=='string'||!data.query.trim()||data.query.length>2000)throw new AppError('Enter a search up to 2,000 characters.');return json(await retrieveContext(env,id,data.query));}
+      }
+      if(path==='/api/account/export'&&request.method==='GET')return json({...publicState((await load(env,id)).state),...(retrievalReady(env)&&id.startsWith('clerk:')?{personalMemory:await listMemory(env,id,true)}:{})},200,{'Content-Disposition':'attachment; filename="sciapp-records.json"'});
       const action = path.match(/^\/api\/actions\/([a-f0-9-]+)$/);
       if (action && request.method === 'POST') { const data=await bodyJSON(request); return json(await mutate(env,id,s=>finishProposal(s,action[1],data.decision))); }
       const undo = path.match(/^\/api\/events\/([a-f0-9-]+)\/undo$/);
@@ -129,18 +141,21 @@ export default {
         if(data.photoId) { attachmentOwner(state,data.photoId); await limit(request,env,'ai',60); const file=await env.PHOTOS.get(`${id}/${data.photoId}`); if(!file)throw new AppError('Photo no longer available.',404); try{photoData=await analyzePhoto(env,file,text);}catch{photoData={type:'other',notes:'AI could not read it reliably. You can enter the details.'};} }
         const userMessage=message('user',text||'Photo attached',data.photoId?{photoId:data.photoId,photoUrl:`/api/photos/${data.photoId}`}:{ });
         state.messages.push(userMessage);
-        let reply=(!photoData && reminderChat(state,text)) || handleKnown(state,text,photoData,data.photoId);
+        let reply=(!photoData && await memoryChat(env,id,text,state)) || (!photoData && reminderChat(state,text)) || handleKnown(state,text,photoData,data.photoId);
         if(reply?.approveId)reply=finishProposal(state,reply.approveId,'approve');
         else if(reply?.cancelId)reply=finishProposal(state,reply.cancelId,'cancel');
         else if(reply?.bagReading)reply=proposal(state,'bag',reply.bagReading);
         if(!reply) {
           await limit(request,env,'ai',60);
-          try { const interpreted=await interpret(env,state,text);
+          try { let context={};try{context=await retrieveContext(env,id,text);}catch{console.warn(JSON.stringify({event:'retrieval_unavailable'}));}
+            const interpreted=await interpret(env,state,text,{memories:context.memories||[],sources:(context.sources||[]).map(s=>({...s,text:s.body}))});
             if(interpreted.kind==='action' && interpreted.action) reply=assistantAction(state,text,interpreted.action);
             else reply=message('assistant',String(interpreted.content||'What would you like to record?').slice(0,4000),{sources:interpreted.sources||[],options:['Log catheterization','Add supplies','Settings']});
           } catch(e) { if(e instanceof AppError)reply=message('assistant','I could not interpret that reliably. Nothing from this message was saved as a care action. Please tell me what you want to record.',{options:['Set medication reminders','Record medication','Settings']}); else reply=message('assistant','The AI service is unavailable right now. You can still use the care logging buttons, record a reading, or enter supply counts.',{options:['Log catheterization','Add supplies','Record blood pressure']}); }
         }
-        state.messages.push(reply); await store(env,id,state,version); return json({reply,state:publicState(state)});
+        state.messages.push(reply); await store(env,id,state,version);
+        ctx.waitUntil((async()=>{try{await backfillMemory(env,id,state);await archiveMessages(env,id,[userMessage]);await processIndexJobs(env);}catch{console.warn(JSON.stringify({event:'memory_archive_retry_needed'}));}})());
+        return json({reply,state:publicState(state)});
       }
       if (path === '/api/photos' && request.method === 'POST') {
         await limit(request,env,'photos',30);

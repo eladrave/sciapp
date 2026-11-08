@@ -1,0 +1,45 @@
+# Personal memory and shared resources
+
+Cloudflare D1 remains the source of truth for medications, schedules, stock, allergies and confirmed care. Private photos remain in R2. Two Cloudflare Vectorize V2 indexes support semantic retrieval:
+
+- `sciapp-personal-memory`: historical user-written messages, partitioned into a server-derived SHA-256 namespace for each stable signed-in account. The client cannot choose the account or namespace. Hydration checks the authenticated owner and deletion tombstones in D1 even when the vector service returns an incorrect or stale ID.
+- `sciapp-shared-resources`: administrator-published, source-linked educational excerpts. Private memories never flow into this index. The four existing curated summaries seed it, not full copies of external articles.
+
+Workers AI `@cf/baai/bge-base-en-v1.5` supplies 768-dimensional embeddings; indexes use cosine distance. Original text lives in `retrieval_sources` and 500-character chunks in `retrieval_chunks`. Vectorize stores IDs, vectors and namespaces, without text metadata. A query embeds once, searches both collections, and hydrates up to five matches per collection above a 0.65 score. This threshold is an initial heuristic, not clinical validation. Source links accompany resource answers. Personal memory is historical context, never medical evidence or proof a dose was taken. Structured current records override it.
+
+Only signed-in accounts capture personal memory, enabled by default. Capture uses successful user chat turns of at least 20 characters, excluding common controls. Assistant guesses are not remembered. Existing retained user messages are backfilled; chats already removed by the old 100-message cap cannot be recovered. Old remembered statements can be stale or contradict newer ones. Users can inspect and remove them. The full medical event ledger continues separately.
+
+## Chat and button controls
+
+Settings has a Memory and resources card. Equivalent text or voice commands:
+
+- `Show my memories`, followed by `Forget memory 1` for a displayed entry.
+- `Turn memory off` or `Turn memory on`.
+- `Clear my memories`, followed by `Yes, clear my memories`.
+- `Show shared resources`.
+- Administrators: `Add shared resource`. The conversation asks for title, HTTPS source URL, and text, then requires `Publish shared resource`.
+
+Off stops new capture and private retrieval but retains existing memory. Re-enabling starts capture from that point; messages written while disabled are not backfilled. Clear removes original memory text from the retrieval tables immediately and tombstones chunks for asynchronous Vectorize deletion. D1 checks stop deleted text appearing during vector propagation. Original chat messages, confirmed records and provider backups are separate; clearing memory does not erase them. Existing deleted source IDs prevent cron from recreating the same message as memory. New messages may create new memories while enabled.
+
+## Administration and APIs
+
+Resource privileges live in server-managed `resource_admins(account_id)`. They are not granted by client email, role claims or user input. The operator grants a verified stable account using a D1 insertion; public repository configuration contains no owner identity.
+
+- `GET /api/memory`: enabled status and latest 100 memories.
+- `POST /api/memory/settings`: `{ "enabled": false }`.
+- `DELETE /api/memory`: `{ "confirm": true }`.
+- `DELETE /api/memory/:sourceId`: owner-only removal.
+- `POST /api/memory/search`: `{ "query": "my voice preferences" }`.
+- `GET /api/resources`: shared resource catalog and caller's administrator status.
+- `POST /api/resources`: admin-only `{ "title": "...", "url": "https://...", "text": "..." }`, maximum 12,000 characters of supplied text.
+- Account export includes all active private memories in addition to care records.
+
+Resources accept supplied excerpts, with source URLs as citations. They do not fetch arbitrary URLs or parse PDFs yet. Review medical resources before publication and use content you can share. This seed collection needs expansion and clinical review before being treated as comprehensive guidance.
+
+## Reliability and deployment
+
+Migration `0004_retrieval.sql` is additive. `scripts/deploy.mjs` creates both indexes if absent and binds `PERSONAL_MEMORY`, `SHARED_RESOURCES`, and `AI`, preserving authentication and push secrets. Hostnames remain configured in deployment.json.
+
+D1 chunks act as a durable indexing queue. Request background work and the existing minute cron process jobs with leases, stable IDs and exponential retry. The cron rotates through four signed-in accounts to reconcile retained messages after interrupted requests. Indexing and deletion are eventually consistent. A user who generates more than 100 messages before reconciliation can exceed the recovery window after an archive failure. Vector outages degrade chat to recent structured context and the keyword seed collection. Log events contain operation/scope, not private text. Monitor pending jobs and retry counts in D1.
+
+Cloudflare Vectorize and Workers AI usage is charged to the connected Cloudflare account under its current plan. No separate LLM API key was added.

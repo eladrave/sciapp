@@ -1,12 +1,12 @@
 {
   "name": "sciapp",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Accessible conversational care companion for people with spinal cord injuries.",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "npm run build && node scripts/dev.mjs",
     "test": "npm run build && node --test test/*.test.js",
-    "check": "node --check worker/index.js && node --check worker/domain.js && node --check worker/conversation.js && node --check web/app.js && node --check web/auth.js",
+    "check": "node --check worker/index.js && node --check worker/domain.js && node --check worker/conversation.js && node --check web/app.js && node --check web/auth.js && node --check worker/retrieval.js && node --check worker/assistant-actions.js && node --check web/chat-scroll.js",
     "deploy": "npm run build && node scripts/deploy.mjs",
     "test:browser": "playwright test"
   },

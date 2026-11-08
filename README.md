@@ -4,7 +4,7 @@ Accessible conversational care companion for people with spinal cord injuries.
 
 ## Status
 
-Personal care beta at **https://sciapp.eladrave.com** (0.3.1).
+Personal care beta at **https://sciapp.eladrave.com** (0.4.0).
 
 Clerk identities own isolated records in Cloudflare D1. Signed-in accounts have their own medications, allergies, inventory, settings, and confirmed care journal. The separate seven-day sample preview remains available. Production Clerk and Google sign-in are active. This remains a personal-care beta, not a completed production healthcare qualification.
 
@@ -81,3 +81,5 @@ Web and Android will share a Cloudflare backend. A future WhatsApp adapter will 
 ## Development boundaries
 
 Use synthetic fixtures during initial development. Never commit credentials, personal medical data, recordings, private documents, or the reference WhatsApp PDF. Public repository visibility does not grant an open-source license; a license has not yet been selected.
+
+Personal memory and shared resource semantic search use separate Cloudflare Vectorize indexes. See [memory and resources](docs/memory-and-resources.md) for ownership, retention, chat controls, publishing and operations.

@@ -1,0 +1,112 @@
+import { AppError, now, message } from './domain.js';
+import { resources } from './resources.js';
+export const EMBEDDING_MODEL='@cf/baai/bge-base-en-v1.5';
+export const retrievalReady=env=>!!(env.DB&&env.AI&&env.PERSONAL_MEMORY&&env.SHARED_RESOURCES);
+const digest=async text=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)))].map(v=>v.toString(16).padStart(2,'0')).join('');
+export const ownerNamespace=async id=>'u-'+(await digest(id)).slice(0,48);
+export function splitText(text){return text.match(/[\s\S]{1,500}/g)||[];}
+export async function memorySettings(env,id){return await env.DB.prepare('SELECT enabled,backfilled,last_sync_at FROM memory_settings WHERE account_id=?').bind(id).first()||{enabled:1,backfilled:0,last_sync_at:0};}
+export async function resourceAdmin(env,id){return !!await env.DB.prepare('SELECT account_id FROM resource_admins WHERE account_id=?').bind(id).first();}
+async function addSource(env,{id,scope,accountId=null,title,url=null,body,observedAt=null}){
+ const allowed=scope==='personal'?" WHERE COALESCE((SELECT enabled FROM memory_settings WHERE account_id=?),1)=1 AND ?>=COALESCE((SELECT last_sync_at FROM memory_settings WHERE account_id=?),0)":'';
+ const values=[id,scope,accountId,title,url,body,now(),...(scope==='personal'?[accountId,Date.parse(observedAt||now()),accountId]:[])];
+ const statements=[env.DB.prepare('INSERT OR IGNORE INTO retrieval_sources(id,scope,account_id,title,url,body,created_at) SELECT ?,?,?,?,?,?,?'+allowed).bind(...values)];
+ splitText(body).forEach((chunk,i)=>statements.push(env.DB.prepare('INSERT OR IGNORE INTO retrieval_chunks(id,source_id,scope,account_id,body) SELECT ?,?,?,?,? WHERE EXISTS (SELECT 1 FROM retrieval_sources WHERE id=? AND deleted_at IS NULL)').bind(`${id}-${i}`,id,scope,accountId,chunk,id)));
+ await env.DB.batch(statements);
+}
+export async function seedResources(env){for(const r of resources)await addSource(env,{id:'seed-'+r.id,scope:'shared',title:r.title,url:r.url,body:r.text});}
+export async function archiveMessages(env,id,messages){
+ if(!retrievalReady(env)||!id.startsWith('clerk:'))return;
+ const settings=await memorySettings(env,id);if(!settings.enabled)return;
+ for(const m of messages.filter(m=>m.role==='user'&&Date.parse(m.createdAt||now())>=settings.last_sync_at&&m.content?.length>=20&&!/^(?:approve|yes|no|cancel|forget|clear (?:my )?memor|show (?:my memor|shared resources)|publish shared resource|turn (?:my )?memory)/i.test(m.content))){
+  const key='m-'+(await digest(id+'|'+m.id)).slice(0,48);
+  await addSource(env,{id:key,scope:'personal',accountId:id,title:`User statement (${m.createdAt||now()})`,body:m.content,observedAt:m.createdAt});
+ }
+}
+export async function backfillMemory(env,id,state){
+ if(!retrievalReady(env)||!id.startsWith('clerk:'))return;
+ const settings=await memorySettings(env,id);if(settings.backfilled||!settings.enabled)return;
+ await archiveMessages(env,id,state.messages);
+ await env.DB.prepare('INSERT INTO memory_settings(account_id,enabled,backfilled) VALUES(?,1,1) ON CONFLICT(account_id) DO UPDATE SET backfilled=1').bind(id).run();
+}
+export async function setMemory(env,id,enabled){await env.DB.prepare('INSERT INTO memory_settings(account_id,enabled,backfilled,last_sync_at) VALUES(?,?,1,?) ON CONFLICT(account_id) DO UPDATE SET enabled=excluded.enabled,backfilled=1,last_sync_at=excluded.last_sync_at').bind(id,enabled?1:0,Date.now()).run();return {enabled};}
+export async function listMemory(env,id,all=false){const rows=await env.DB.prepare("SELECT id,title,body,created_at FROM retrieval_sources WHERE scope='personal' AND account_id=? AND deleted_at IS NULL ORDER BY created_at DESC"+(all?"":" LIMIT 100")).bind(id).all();return {enabled:!!(await memorySettings(env,id)).enabled,memories:rows.results};}
+export async function forgetMemory(env,id,sourceId=null){
+ // Tombstones take effect at hydration time, before Vectorize's asynchronous removal.
+ const condition=sourceId?' AND id=?':'';const params=sourceId?[now(),id,sourceId]:[now(),id];
+ await env.DB.prepare("UPDATE retrieval_sources SET deleted_at=?,body='' WHERE scope='personal' AND account_id=? AND deleted_at IS NULL"+condition).bind(...params).run();
+ await env.DB.prepare("UPDATE retrieval_chunks SET deleted_at=?,body='',next_attempt_at=0 WHERE account_id=? AND source_id IN (SELECT id FROM retrieval_sources WHERE account_id=? AND deleted_at IS NOT NULL)").bind(now(),id,id).run();
+ // Prevent an automatic backfill from recreating memories after clear-all.
+ if(!sourceId)await env.DB.prepare('INSERT INTO memory_settings(account_id,enabled,backfilled,last_sync_at) VALUES(?,1,1,?) ON CONFLICT(account_id) DO UPDATE SET backfilled=1,last_sync_at=excluded.last_sync_at').bind(id,Date.now()).run();
+}
+export async function addResource(env,id,data){
+ if(!await resourceAdmin(env,id))throw new AppError('Only a resource administrator can publish shared resources.',403);
+ if(typeof data.title!=='string'||!data.title.trim()||data.title.length>200||typeof data.text!=='string'||data.text.trim().length<30||data.text.length>12000)throw new AppError('Provide a title and resource text between 30 and 12,000 characters.');
+ let url;try{url=new URL(data.url);if(url.protocol!=='https:'||url.username||url.password)throw Error();}catch{throw new AppError('Provide an HTTPS source URL.');}
+ const sourceId='r-'+crypto.randomUUID();await addSource(env,{id:sourceId,scope:'shared',title:data.title.trim(),url:url.href,body:data.text.trim()});return {id:sourceId,pendingIndex:true};
+}
+async function embed(env,text){const r=await env.AI.run(EMBEDDING_MODEL,{text:[text]});const v=r.data?.[0];if(!Array.isArray(v)||v.length!==768||v.some(n=>!Number.isFinite(n)))throw Error('Invalid embedding response');return v;}
+export async function processIndexJobs(env,max=4){
+ if(!retrievalReady(env))return;
+ const jobs=await env.DB.prepare('SELECT * FROM retrieval_chunks WHERE (indexed_at IS NULL OR deleted_at IS NOT NULL) AND next_attempt_at<=? AND lease_until<? ORDER BY next_attempt_at, id LIMIT ?').bind(Date.now(),Date.now(),max).all();
+ for(const job of jobs.results){
+  const lease=Date.now()+60000;const claim=await env.DB.prepare('UPDATE retrieval_chunks SET lease_until=? WHERE id=? AND lease_until<?').bind(lease,job.id,Date.now()).run();if(claim.meta.changes!==1)continue;
+  try{
+   const index=job.scope==='personal'?env.PERSONAL_MEMORY:env.SHARED_RESOURCES;
+   if(job.deleted_at){await index.deleteByIds([job.id]);await env.DB.prepare('DELETE FROM retrieval_chunks WHERE id=? AND deleted_at IS NOT NULL').bind(job.id).run();}
+   else{
+    const values=await embed(env,job.body);const namespace=job.scope==='personal'?await ownerNamespace(job.account_id):'shared';
+    await index.upsert([{id:job.id,values,namespace}]);
+    await env.DB.prepare('UPDATE retrieval_chunks SET indexed_at=?,lease_until=0 WHERE id=? AND deleted_at IS NULL').bind(now(),job.id).run();
+   }
+  }catch{
+   await env.DB.prepare('UPDATE retrieval_chunks SET attempts=attempts+1,next_attempt_at=?,lease_until=0 WHERE id=?').bind(Date.now()+Math.min(3600000,30000*2**Math.min(job.attempts,7)),job.id).run();
+   console.warn(JSON.stringify({event:'retrieval_index_retry',scope:job.scope}));
+  }
+ }
+}
+export async function retrieveContext(env,id,text){
+ if(!retrievalReady(env))return {memories:[],sources:[]};
+ const settings=id.startsWith('clerk:')?await memorySettings(env,id):{enabled:0};
+ const vector=await embed(env,text.slice(0,2000));
+ const searches=await Promise.allSettled([settings.enabled?env.PERSONAL_MEMORY.query(vector,{namespace:await ownerNamespace(id),topK:5,returnMetadata:'none'}):Promise.resolve({matches:[]}),env.SHARED_RESOURCES.query(vector,{namespace:'shared',topK:5,returnMetadata:'none'})]);
+ const result={memories:[],sources:[]};
+ for(let i=0;i<searches.length;i++){
+  if(searches[i].status!=='fulfilled')continue;
+  for(const match of searches[i].value.matches||[]){
+   if(match.score<0.65)continue;
+   const row=await env.DB.prepare('SELECT c.body,s.id,s.title,s.url,s.created_at FROM retrieval_chunks c JOIN retrieval_sources s ON s.id=c.source_id WHERE c.id=? AND c.scope=? AND (?=\'shared\' OR c.account_id=?) AND c.deleted_at IS NULL AND s.deleted_at IS NULL').bind(match.id,i?'shared':'personal',i?'shared':'personal',id).first();
+   if(row)result[i?'sources':'memories'].push({...row,score:match.score});
+  }
+ }
+ return result;
+}
+export async function memoryChat(env,id,text,state = {}){
+ if(!retrievalReady(env)||!id.startsWith('clerk:'))return null;
+ if(/^show shared resources[.!]?$/i.test(text)){const rows=(await env.DB.prepare("SELECT title,url FROM retrieval_sources WHERE scope='shared' AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 20").all()).results;return message('assistant',rows.length?'Here are the shared educational resources available to search.':'No shared resources have been published yet.',{sources:rows,options:await resourceAdmin(env,id)?['Add shared resource']:[]});}
+ if(/^add shared resource[.!]?$/i.test(text)){if(!await resourceAdmin(env,id))return message('assistant','Only a resource administrator can publish material for everyone.');state.draft={kind:'sharedResource',stage:'title'};return message('assistant','What is the resource title?',{options:['Cancel']});}
+ if(state.draft?.kind==='sharedResource'&&!/^cancel$/i.test(text)){
+  if(!await resourceAdmin(env,id))throw new AppError('Administrator access required.',403);
+  const d=state.draft;
+  if(d.stage==='title'){if(text.length>200)return message('assistant','Use a title up to 200 characters.');d.title=text;d.stage='url';return message('assistant','What is the original HTTPS source link?',{options:['Cancel']});}
+  if(d.stage==='url'){try{const u=new URL(text);if(u.protocol!=='https:'||u.username||u.password)throw Error();d.url=u.href;}catch{return message('assistant','Please provide an HTTPS source link.');}d.stage='text';return message('assistant','Paste the resource excerpt or summary you want everyone to be able to retrieve. Please use material you can share.',{options:['Cancel']});}
+  if(d.stage==='text'){if(text.length<30)return message('assistant','Please provide at least 30 characters of resource text.');d.text=text;d.stage='review';return message('assistant',`Publish this resource for all users?\n${d.title}\n${d.url}\n\n${d.text}`,{options:['Publish shared resource','Cancel']});}
+  if(d.stage==='review'&&/^publish shared resource[.!]?$/i.test(text)){await addResource(env,id,d);state.draft=null;return message('assistant','The resource is saved. Semantic search will include it after indexing completes.',{options:['Show shared resources']});}
+  return message('assistant','Publish the resource, or cancel?',{options:['Publish shared resource','Cancel']});
+ }
+ if(/^forget memory \d+[.!]?$/i.test(text)&&state.draft?.kind==='memoryList'){const n=Number(text.match(/\d+/)[0]);const key=state.draft.ids[n-1];if(!key)return message('assistant','Choose a memory from the displayed list.');await forgetMemory(env,id,key);state.draft=null;return message('assistant','That saved memory was removed. Its original chat message and care records are unchanged.',{options:['Show my memories']});}
+
+ if(/^(?:show|list|what (?:do you|does the app) remember).*memor|^what do you remember about me\??$/i.test(text)){await backfillMemory(env,id,state);const data=await listMemory(env,id);const shown=data.memories.slice(0,8);state.draft={kind:'memoryList',ids:shown.map(m=>m.id)};return message('assistant',shown.length?shown.map((m,i)=>`${i+1}. ${m.body}`).join('\n\n'):'You do not have saved personal memories yet.',{options:[...shown.map((_,i)=>`Forget memory ${i+1}`),data.enabled?'Turn memory off':'Turn memory on','Clear my memories']});}
+ if(/^(?:turn|switch) (?:my )?memory (on|off)[.!]?$/i.test(text)){const enabled=/on[.!]?$/i.test(text);await setMemory(env,id,enabled);return message('assistant',enabled?'Personal memory is on. Your user-written messages can be remembered for future conversations.':'Personal memory is off. Existing memories are retained but will not be searched. You can clear them separately.',{options:enabled?['Show my memories']:['Clear my memories']});}
+ if(/^clear (?:all )?(?:my )?memor(?:y|ies)[.!]?$/i.test(text))return message('assistant','Clear the saved personal memories? This does not delete your original care records or chat history. Say “Yes, clear my memories” to confirm.',{options:['Yes, clear my memories','Cancel']});
+ if(/^yes,? clear (?:all )?(?:my )?memor(?:y|ies)[.!]?$/i.test(text)){await forgetMemory(env,id);return message('assistant','Your saved personal memories were cleared. Original care records and chat history are unchanged. New messages can create new memories while memory is on.',{options:['Turn memory off']});}
+ return null;
+}
+
+// Reconcile saved recent messages after an interrupted request. Rotate accounts so
+// one busy account cannot prevent others from being repaired by the minute cron.
+export async function syncMemoryAccounts(env,max=4){
+ if(!retrievalReady(env))return;
+ const rows=await env.DB.prepare("SELECT a.id,a.state,a.updated_at FROM accounts a LEFT JOIN memory_settings m ON m.account_id=a.id WHERE a.id LIKE 'clerk:%' AND COALESCE(m.enabled,1)=1 AND CAST(unixepoch(a.updated_at,'subsec')*1000 AS INTEGER)>COALESCE(m.last_sync_at,0) ORDER BY COALESCE(m.last_sync_at,0) LIMIT ?").bind(max).all();
+ for(const row of rows.results){await archiveMessages(env,row.id,JSON.parse(row.state).messages);await env.DB.prepare('INSERT INTO memory_settings(account_id,enabled,backfilled,last_sync_at) VALUES(?,1,1,?) ON CONFLICT(account_id) DO UPDATE SET backfilled=1,last_sync_at=MAX(memory_settings.last_sync_at,excluded.last_sync_at)').bind(row.id,Date.parse(row.updated_at)).run();}
+}
