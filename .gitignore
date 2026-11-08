@@ -16,3 +16,6 @@ uploads/
 recordings/
 test-results/
 playwright-report/
+generated/
+.clerk/
+.cloudflare/

@@ -1,0 +1,35 @@
+{
+  "name": "sciapp",
+  "version": "0.1.0",
+  "description": "Accessible conversational care companion for people with spinal cord injuries.",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "npm run build && node scripts/dev.mjs",
+    "test": "npm run build && node --test test/*.test.js",
+    "check": "node --check worker/index.js && node --check worker/domain.js && node --check worker/conversation.js && node --check web/app.js && node --check web/auth.js",
+    "deploy": "npm run build && node scripts/deploy.mjs",
+    "test:browser": "playwright test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eladrave/sciapp.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "UNLICENSED",
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/eladrave/sciapp/issues"
+  },
+  "homepage": "https://github.com/eladrave/sciapp#readme",
+  "dependencies": {
+    "@clerk/backend": "^3.27.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "cf": "^1.0.0-beta.28",
+    "esbuild": "^0.28.2",
+    "miniflare": "^5.20261104.0-beta"
+  },
+  "private": true
+}
