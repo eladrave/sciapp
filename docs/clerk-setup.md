@@ -23,7 +23,7 @@ The [existing application Dashboard](https://dashboard.clerk.com/apps/app_3LpVf5
 
 On 2026-11-08, a production instance was created inside the same application by cloning development authentication and theme settings, without selecting an upgrade or paid feature. The production instance is `ins_3LppIQO7gxZVoOIQmmb9BsJ6hmJ`, and the original development instance remains intact. The app domain is `sciapp.eladrave.com`, configured as a secondary application because the parent `eladrave.com` Clerk domain is already used by another application. The production Frontend API is `clerk.sciapp.eladrave.com`.
 
-Live instance keys were captured privately with filesystem mode 600 and were not committed. Worker keys have not been switched. Development and production instances have separate user pools. Existing-user migration and identity mapping must be approved and completed before that switch; the current application continues using its development identity pool. Keep a future domain configurable through deployment settings and review Clerk domain, DNS, OAuth redirects, CSP, and allowed origins together when it changes.
+Live instance keys were captured privately with filesystem mode 600 and were not committed. Following explicit owner approval, the existing verified owner identity was copied to production and linked to the original stable care account through a server-managed identity mapping. The original care state was preserved. Worker keys were switched atomically, and the deployed app reports version `0.3.0` with `authEnvironment: production`. Development and production have separate Clerk user pools; the explicit mapping preserves access to existing care records. Client-submitted email values never create these mappings. Keep a future domain configurable through deployment settings and review Clerk domain, DNS, OAuth redirects, CSP, and allowed origins together when it changes.
 
 The production domain requires these DNS-only CNAME records in the `eladrave.com` zone:
 
@@ -37,7 +37,7 @@ The production domain requires these DNS-only CNAME records in the `eladrave.com
 
 The exact Google OAuth redirect URI shown by the production instance is `https://clerk.sciapp.eladrave.com/v1/oauth_callback`. The dedicated SCIapp Google OAuth client credentials were saved to the production Google connection. A page reload confirmed the expected client ID persisted, the connection was enabled for sign-up and sign-in, and the “Setup required” warning was absent. No owner Google sign-in or real production-user creation was performed as part of that verification.
 
-Production setup checks confirmed all five DNS records verified (Frontend API, account portal, and email 3/3). The Frontend API environment endpoint returned HTTP 200 over validated TLS. The account portal host also completed validated TLS, returning HTTP 403 without an authenticated session. The privately retained live API key successfully authenticated a Backend API instance lookup and returned the expected production instance ID. No development user was deleted or imported during this setup. Provider configuration is prepared, but the running app remains on development keys pending explicit approval for existing-account continuity.
+Production setup checks confirmed all five DNS records verified (Frontend API, account portal, and email 3/3). Clerk subsequently reported SSL certificates **Issued** for both the Frontend API and account portal. The Frontend API environment endpoint returned HTTP 200 over validated TLS. The account portal host also completed validated TLS, returning HTTP 403 without an authenticated session. The privately retained live API key successfully authenticated a Backend API instance lookup and returned the expected production instance ID. The development instance and its records remain intact.
 
 ## Synthetic authentication checks
 
@@ -49,9 +49,11 @@ References: [Clerk testing overview](https://clerk.com/docs/guides/development/t
 
 ### Verified deployed results
 
-On 2026-11-08, a dedicated synthetic test user consumed a one-time sign-in ticket in a real browser on `https://sciapp.elad-rave-scm.workers.dev`. Its genuine Clerk session was accepted by the deployed Worker. The positive integration script passed all five checks: anonymous requests rejected, genuine Clerk token accepted, authenticated account does not inherit preview data, authenticated history persists separately from preview history, and an invalid bearer token cannot fall back to a preview cookie. The synthetic Clerk user was subsequently deleted, and a follow-up lookup returned 404. The interactive Google provider flow was not performed.
+On 2026-11-08, a dedicated synthetic test user consumed a one-time sign-in ticket in a real browser on `https://sciapp.elad-rave-scm.workers.dev`. Its genuine Clerk session was accepted by the deployed Worker. The positive integration script passed all five checks: anonymous requests rejected, genuine Clerk token accepted, authenticated account does not inherit preview data, authenticated history persists separately from preview history, and an invalid bearer token cannot fall back to a preview cookie. The synthetic Clerk user was subsequently deleted, and a follow-up lookup returned 404. The interactive Google provider flow was not performed during that initial development check; the later production flow is recorded below.
 
 After the ownership claim and custom-domain deployment, a separate synthetic account authenticated through the official Frontend API ticket flow with `https://sciapp.eladrave.com` as its origin. The resulting JWT carried that exact `azp`; the deployed `/api/state` returned 200 with personal mode, no medication records, no events, and no seeded stock. The test Clerk user and its single D1 account row were removed, with zero matching account rows remaining. This domain check verifies session acceptance, not the production Google provider setup.
+
+After the approved production cutover, two fresh synthetic production accounts authenticated through the official Frontend API ticket flow with the primary origin. All nine checks passed: deployed version and production configuration, genuine production session acceptance with a fresh personal space, bulk import held for approval, cross-account proposal isolation, approved generic medication/allergy persistence without inferred schedule or stock, explicit reminder times, exactly one stock deduction across an approval replay, invalid bearer rejection, and zero initial push subscriptions. Both synthetic Clerk users and exactly two synthetic D1 account rows were removed. A scoped check confirmed they had no identity aliases before deletion, and zero matching account rows remained afterward. The real owner and all existing aliases were untouched. This synthetic session test does not exercise an interactive Google authorization flow or physical push delivery.
 
 ## Browser
 
@@ -74,10 +76,14 @@ if (!state.isAuthenticated) return new Response('Unauthorized', { status: 401 })
 const { userId } = state.toAuth();
 ```
 
-Use the verified `userId` for database ownership. Caregiver access requires a separate app authorization check against an accepted grant. Store secrets as Worker secrets, and do not log session tokens.
+Resolve the verified `userId` through the server-managed `account_identities` table to find a preserved stable account; unaliased identities use their own `clerk:<userId>` account. Never accept an identity mapping or trusted email claim from the browser. Caregiver access requires a separate app authorization check against an accepted grant. Store secrets as Worker secrets, and do not log session tokens.
 
 ### Google audience publication
 
 The dedicated Google Cloud project sciapp-eladrave has a SCIapp Web Production OAuth client configured for the app origin and exact Clerk callback above. The client secret is private and not stored in this repository. Branding uses the live /privacy and /terms pages, with homepage links. Audience is External / In production, with zero users at setup. No extra Google API access or real-owner OAuth sign-in test was performed.
 
-The live Worker remains on development keys. An automatic approval review blocked copying the existing verified owner identity to the new production instance, requiring explicit user approval for that sensitive transfer. The prepared account_identities mapping preserves D1/R2 ownership after approval. Do not treat completed provider settings as completed authentication cutover.
+After explicit user approval for the verified owner's identity transfer, the production identity was mapped to the preserved stable care account and the Worker switched to production keys. The post-cutover synthetic checks above verified live production authentication and account isolation. Interactive Google authorization and physical push delivery are separate validation steps.
+
+### Interactive owner Google and logout verification
+
+After explicit migration approval and production cutover, the actual Google browser flow was completed using the dedicated SCIapp client and basic identity consent. The returned Clerk user matched the imported production identity, authenticated /api/state returned200, and existing history/conversation loaded from the original stable account. The app’s existing schema migration recovered a prior medication-list message as a pending review; no care action was approved by this authentication test. Logout cleared the app/client state and anonymous /api/state returned401.

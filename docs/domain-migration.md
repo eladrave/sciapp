@@ -2,7 +2,7 @@
 
 `deployment.json` owns the current app origin, temporary fallback origins, and Cloudflare zone ID. The deployment script installs APP_ORIGIN and ADDITIONAL_APP_ORIGINS on the Worker and binds the primary hostname as a Cloudflare Worker Custom Domain. The Worker serves only those configured production hostnames. Browser API/asset URLs, service worker scope, manifest URLs and notification clicks are relative to the current origin.
 
-Current primary URL: https://sciapp.eladrave.com. The previous workers.dev origin stays available during transition. Neither hostname is an account identifier: the same Worker, D1, private R2 and Clerk instance serve both.
+Current primary URL: https://sciapp.eladrave.com. The previous workers.dev home URL redirects to the canonical app in production. API and asset requests are never redirected across origins. Neither hostname is an account identifier: the same Worker, D1, private R2 and Clerk instance serve both.
 
 ## Moving the app later
 
@@ -15,6 +15,6 @@ Current primary URL: https://sciapp.eladrave.com. The previous workers.dev origi
 
 ## Development to production authentication is a separate operation
 
-The current Clerk instance is still development until production is provisioned (ownership is already claimed). A development-to-production instance change is not the same as a domain change. Development identities and sessions do not automatically become production identities. Preserve existing data and prepare an explicit verified old-ID to new-ID mapping before switching keys. Never attach medical records to a new identity using an unverified email supplied by the browser.
+The approved development-to-production transition is complete. Production keys and the verified existing-owner mapping are active. A development-to-production instance change is not the same as a domain change. Development identities and sessions do not automatically become production identities. Preserve existing data and prepare an explicit verified old-ID to new-ID mapping before switching keys. Never attach medical records to a new identity using an unverified email supplied by the browser.
 
 Official references: [Cloudflare Worker Custom Domains](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/), [Clerk changing domains](https://clerk.com/docs/guides/development/deployment/changing-domains), [Clerk production deployment](https://clerk.com/docs/guides/development/deployment/production).

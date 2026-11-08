@@ -6,7 +6,7 @@ import { reminderTasks } from './reminders.js';
 import { reminderChat } from './reminder-chat.js';
 import { subscribe, unsubscribe, pushStatus, testPush, dispatchReminders } from './push.js';
 import { handleKnown, interpret, analyzePhoto } from './conversation.js';
-import { configuredOrigins, contentSecurityPolicy } from './origins.js';
+import { configuredOrigins, contentSecurityPolicy, canonicalHome } from './origins.js';
 import { assets } from '../generated/assets.js';
 
 function publicState(state) { return { ...view(state), reminderTasks: reminderTasks(state) }; }
@@ -74,7 +74,9 @@ export default {
     const url = new URL(request.url); const path = url.pathname;
     try {
       if (!configuredOrigins(env,url.origin).includes(url.origin))return json({error:'This hostname is not configured for SCIapp.'},421);
-      if (path === '/api/health') return json({ status: 'ok', version: '0.2.2', mode: 'personal-beta' });
+      const canonical=canonicalHome(request,env);
+      if(canonical)return new Response(null,{status:302,headers:{...security,Location:canonical}});
+      if (path === '/api/health') return json({ status: 'ok', version: '0.3.0', mode: 'personal-beta' });
       if (path === '/api/config' && request.method === 'GET') return json({ appOrigin:env.APP_ORIGIN||url.origin, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null, authEnvironment: env.CLERK_PUBLISHABLE_KEY?.startsWith('pk_live_') ? 'production' : 'development', pushPublicKey:env.VAPID_PUBLIC_KEY||null, mode: env.CLERK_PUBLISHABLE_KEY ? 'authenticated' : 'preview', features: { notifications: !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY), medications:true, photos: true, transcription: !!env.AI, speech: false, caregivers: 'drafts', healthConnect: false }, notice: 'Personal care beta. Medication and allergy records are user-entered. Notifications are reminders, not guaranteed clinical alarms. Caregiver invitations remain drafts.' });
       if (!path.startsWith('/api/')) {
         if (!['GET','HEAD'].includes(request.method)) return json({ error: 'Method not allowed.' },405);
