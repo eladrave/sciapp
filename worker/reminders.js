@@ -33,7 +33,18 @@ export function reminderTasks(state, at=Date.now()) {
   }
   tasks.push(...candidates.filter(t=>!completed.has(t.id)));
  }
- if(state.settings.catheterRemindersEnabled){
+ if(state.settings.catheterRemindersEnabled&&state.settings.catheterScheduleMode==='daily'){
+  const candidates=[];for(let offset=-1;offset<=2;offset++)for(const time of state.settings.catheterTimes||[]){
+   const date=new Date(day+offset*86400000).toISOString().slice(0,10),due=zonedTime(date,time,timezone);
+   if(!Number.isFinite(due)||due<Date.parse(state.settings.catheterScheduleUpdatedAt||'1970-01-01'))continue;
+   candidates.push({id:`catheter:daily:${date}:${time}:${state.settings.catheterScheduleId||''}`,kind:'catheterization',title:'Catheterization',dueAt:iso(due)});
+  }
+  const completed=new Set();for(const event of state.events.filter(e=>e.kind==='catheterization'&&!e.voided)){
+   const timestamp=Date.parse(event.occurredAt||event.createdAt);const match=candidates.filter(t=>!completed.has(t.id)&&Math.abs(Date.parse(t.dueAt)-timestamp)<=90*minute).sort((a,b)=>Math.abs(Date.parse(a.dueAt)-timestamp)-Math.abs(Date.parse(b.dueAt)-timestamp))[0];if(match)completed.add(match.id);
+  }
+  tasks.push(...candidates.filter(t=>!completed.has(t.id)));
+ }
+ if(state.settings.catheterRemindersEnabled&&state.settings.catheterScheduleMode!=='daily'){
   const last=state.events.find(e=>e.kind==='catheterization'&&!e.voided);
   const baseline=Math.max(Date.parse(last?.occurredAt||0)||0,Date.parse(state.settings.catheterStartAt||0)||0);
   if(baseline){const due=baseline+Number(state.settings.catheterIntervalHours)*3600000;tasks.push({id:`catheter:${baseline}:${state.settings.catheterIntervalHours}`,kind:'catheterization',title:'Catheterization',dueAt:iso(due)});}

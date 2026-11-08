@@ -78,7 +78,7 @@ function renderMessages() {
   body.append(node('p','message-text',message.content || ''));
   if (message.photoId && state.photos?.some(photo => photo.id === message.photoId)) { const img = node('img','photo-message'); img.alt = 'Photo attached to this message'; body.append(img); photoLoads.push(() => loadHistoricalPhoto(img,message.photoId,generation)); body.append(button('Delete photo','secondary',() => deleteSavedPhoto(message.photoId))); }
   if (message.proposal) body.append(proposalCard(message.proposal));
-  if (message.sources?.length) { const sources = node('div','sources'); sources.append(node('strong','','Learn more')); for (const source of message.sources) { try { const url = new URL(source.url); if (url.protocol !== 'https:') continue; const a = node('a','',source.title || url.hostname); a.href = url.href; a.target = '_blank'; a.rel = 'noopener noreferrer'; sources.append(a); } catch {} } body.append(sources); }
+  if (message.sources?.length) { const sources = node('div','sources'); sources.append(node('strong','','Learn more')); for (const source of message.sources) { try { const url = new URL(source.url,location.origin); if (url.protocol !== 'https:') continue; const a = node('a','',source.title || url.hostname); a.href = url.href; a.target = '_blank'; a.rel = 'noopener noreferrer'; sources.append(a); } catch {} } body.append(sources); }
   if (message.options?.length) { const options = node('div','quick-replies'); message.options.forEach(text => options.append(button(text,'',() => chooseReply(text)))); body.append(options); }
   row.append(body); fragment.append(row);
  }
@@ -109,7 +109,6 @@ async function act(id, decision) {
  finally { if(generation === accountGeneration) { setBusy(false); focusComposer(); resumeHandsFree(); } }
 }
 async function send(text = ui.message.value) {
- if (notificationCommand(text)) { await notificationAction(notificationCommand(text)); return; }
  if (busy || uploadBusy || recording) return;
  const content = text.trim(); if (!content && !photo) { focusComposer(true); return; }
  const generation = accountGeneration;
@@ -164,6 +163,7 @@ function appendMedicationCards(panel) {
 function appendReminders(panel) {
  const card = node('section','data-card'); card.append(node('h2','','Upcoming reminders'));
  card.append(node('p','',`Timezone: ${state.settings.timezone || 'Not set'}`));
+ if(state.settings.catheterScheduleMode==='daily'&&state.settings.catheterTimes?.length)card.append(node('p','',`Catheterization every day: ${state.settings.catheterTimes.join(', ')}`));
  const tasks = state.reminderTasks || [];
  for (const task of tasks) card.append(node('p','',`${task.title} · ${formatTime(task.dueAt)}`));
  if (!tasks.length) card.append(node('p','','No upcoming reminders. Set exact medication times or start catheterization reminders.'));

@@ -4,7 +4,7 @@ export const uid = () => crypto.randomUUID();
 export function message(role, content, extra = {}) { return { id: uid(), role, content, createdAt: now(), ...extra }; }
 export function initialState({ real = false } = {}) {
   return {
-    profile: { name: 'You' }, careSchemaVersion: real ? 2 : 1, mode: real ? 'personal' : 'preview', medications: [], allergies: [],
+    profile: { name: 'You' }, schedulingSchemaVersion:1, careSchemaVersion: real ? 2 : 1, mode: real ? 'personal' : 'preview', medications: [], allergies: [],
     inventory: real ? [{ id: 'catheter', name: 'Catheters', count: null, unit: 'catheters' }] : [{ id: 'catheter', name: 'Example catheters', count: 60, unit: 'catheters' }, { id: 'medication', name: 'Example medication', count: 30, unit: 'tablets' }],
     events: [], caregivers: [], settings: { muted: true, handsFree: false, voicePauseMs: 5000, textScale: 1, catheterIntervalHours: 4, timezone: 'America/New_York', notificationsEnabled: false, catheterRemindersEnabled: false },
     messages: [message('assistant', real ? 'Welcome to your care space. Add your medication list and allergies, configure your own reminder times, or record care. Nothing is saved until you approve it.' : 'Welcome. This is your private SCI care preview, with example supplies and medication. What would you like to try? Please use sample information while we test.', { options: ['Log catheterization', 'Add supplies', 'Record medication', 'Invite a caregiver'] })],
@@ -39,6 +39,10 @@ export function proposal(state, kind, params) {
     params = { name: string(params.name || 'Catheters', 'product name'), boxes: number(params.boxes, 'number of boxes', 1, 1000), perBox: number(params.perBox, 'units per box', 1, 1000), photoId: params.photoId || null };
     if (!Number.isInteger(params.boxes) || !Number.isInteger(params.perBox)) throw new AppError('Box and unit counts must be whole numbers.');
     title = 'Add supply delivery'; details = [params.name, `${params.boxes} boxes × ${params.perBox} each`, `Add ${params.boxes * params.perBox} catheters`];
+  } else if (kind === 'catheterSchedule') {
+    if(!Array.isArray(params.times)||!params.times.length||params.times.length>24||params.times.some(t=>typeof t!=='string'||!/^([01]\d|2[0-3]):[0-5]\d$/.test(t)))throw new AppError('Provide valid daily times with AM/PM or 24-hour HH:mm.');
+    params={times:[...new Set(params.times)].sort(),timezone:state.settings.timezone||'UTC'};
+    title='Set daily catheterization reminders';details=[`Every day at ${params.times.join(', ')} (${params.timezone})`,'Enable catheterization reminders and scheduled account notifications','Device notification permission is required; existing registered devices will use these times','This schedules reminders only. No catheter use or volume is recorded, and stock stays unchanged.'];
   } else if (kind === 'catheterStock') {
     params={count:number(params.count,'current catheter count',0,100000)};if(!Number.isInteger(params.count))throw new AppError('Catheter counts must be whole numbers.');
     title='Set current catheter stock';details=[`Current total: ${params.count} catheters`,'Replace the previous balance with your counted total. This is not a delivery.'];
@@ -83,11 +87,12 @@ export function proposal(state, kind, params) {
     if (params.systolic == null && params.heartRate == null) throw new AppError('Please provide a blood pressure or heart-rate reading.');
     title = 'Save your reading'; details = [params.systolic == null ? null : `Blood pressure: ${params.systolic}/${params.diastolic} mmHg`, params.heartRate == null ? null : `Heart rate: ${params.heartRate} bpm`, 'Source: entered by you'].filter(Boolean);
   } else if (kind === 'settings') {
-    const allowed = ['muted', 'handsFree', 'voicePauseMs', 'textScale', 'quietUntil', 'catheterIntervalHours', 'name', 'timezone', 'catheterRemindersEnabled', 'catheterStartAt', 'notificationsEnabled'];
+    const allowed = ['muted', 'handsFree', 'voicePauseMs', 'textScale', 'quietUntil', 'catheterIntervalHours', 'name', 'timezone', 'catheterRemindersEnabled', 'catheterStartAt', 'notificationsEnabled', 'catheterScheduleMode'];
     params = Object.fromEntries(Object.entries(params).filter(([k]) => allowed.includes(k)));
     if (!Object.keys(params).length) throw new AppError('Which setting would you like to change?');
     if ('muted' in params && typeof params.muted !== 'boolean') throw new AppError('Mute must be on or off.');
     for (const key of ['catheterRemindersEnabled','notificationsEnabled']) if(key in params && typeof params[key]!=='boolean')throw new AppError('Reminder settings must be on or off.');
+    if('catheterScheduleMode' in params&&!['daily','interval'].includes(params.catheterScheduleMode))throw new AppError('Choose daily times or an interval.');
     if('catheterStartAt' in params && !Number.isFinite(Date.parse(params.catheterStartAt)))throw new AppError('Provide a valid reminder start time.');
     if('timezone' in params){try{new Intl.DateTimeFormat('en',{timeZone:params.timezone}).format();}catch{throw new AppError('Provide an IANA timezone, such as America/New_York.');}}
     if ('handsFree' in params && typeof params.handsFree !== 'boolean') throw new AppError('Hands-free must be on or off.');
@@ -96,7 +101,7 @@ export function proposal(state, kind, params) {
     if ('catheterIntervalHours' in params) params.catheterIntervalHours = number(params.catheterIntervalHours, 'hours between reminders', 1, 24);
     if ('quietUntil' in params && params.quietUntil !== null && (!Number.isFinite(Date.parse(params.quietUntil)) || Date.parse(params.quietUntil) <= Date.now())) throw new AppError('Quiet time must end in the future.');
     if ('name' in params) params.name = string(params.name, 'name', 80);
-    title = 'Update your preferences'; details = Object.entries(params).map(([k, v]) => ({ muted: `Spoken replies ${v ? 'off' : 'on'}`, handsFree: `Hands-free browser voice ${v ? 'on' : 'off'} while this page is open`, voicePauseMs: `Wait ${Number(v)/1000} seconds after speech`, textScale: `Text size ${Math.round(Number(v) * 100)}%`, catheterIntervalHours: `Catheterization interval: ${v} hours`, quietUntil: v ? `Quiet until ${v}` : 'End timed quiet mode', name: `Call you ${v}`, timezone: `Timezone: ${v}`, catheterRemindersEnabled: `Catheter reminders ${v?'on':'off'}`, notificationsEnabled: `Notifications ${v?'on':'off'}`, catheterStartAt: `Start catheter reminder clock: ${v}` })[k]);
+    title = 'Update your preferences'; details = Object.entries(params).map(([k, v]) => ({ muted: `Spoken replies ${v ? 'off' : 'on'}`, handsFree: `Hands-free browser voice ${v ? 'on' : 'off'} while this page is open`, voicePauseMs: `Wait ${Number(v)/1000} seconds after speech`, textScale: `Text size ${Math.round(Number(v) * 100)}%`, catheterScheduleMode: `Catheter reminder mode: ${v}`, catheterIntervalHours: `Catheterization interval: ${v} hours`, quietUntil: v ? `Quiet until ${v}` : 'End timed quiet mode', name: `Call you ${v}`, timezone: `Timezone: ${v}`, catheterRemindersEnabled: `Catheter reminders ${v?'on':'off'}`, notificationsEnabled: `Notifications ${v?'on':'off'}`, catheterStartAt: `Start catheter reminder clock: ${v}` })[k]);
   } else if (kind === 'caregiver') {
     params = { email: string(params.email, 'email address', 254), role: ['follow', 'record'].includes(params.role) ? params.role : 'follow' };
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(params.email)) throw new AppError('Please check the email address.');
@@ -118,6 +123,7 @@ export function finishProposal(state, id, decision) {
   if (decision === 'cancel') { p.status = 'cancelled'; syncProposal(state, p); return message('assistant', 'Cancelled. Your care records and supplies are unchanged.'); }
   const data = p.params;
   const event = { id: uid(), kind: p.kind, title: p.title, detail: p.details.join(' · '), createdAt: now(), occurredAt: data.time || now(), actor: state.profile.name, proposalId: p.id, delta: null, data: { ...data } };
+  if(p.kind==='catheterSchedule'){if(data.timezone!==state.settings.timezone)throw new AppError('Your timezone changed. Please review the schedule again.',409);Object.assign(state.settings,{catheterTimes:data.times,catheterScheduleMode:'daily',catheterScheduleUpdatedAt:now(),catheterScheduleId:uid(),catheterRemindersEnabled:true,notificationsEnabled:true});}
   if (p.kind === 'catheterStock')state.inventory.find(i=>i.id==='catheter').count=data.count;
   if (p.kind === 'carePlan') {
     state.medications ||= [];state.allergies ||= [];
@@ -146,6 +152,7 @@ export function finishProposal(state, id, decision) {
   state.events.unshift(event); p.status = 'approved'; syncProposal(state, p);
   const stockItem=event.delta?.medicationId ? state.medications.find(m=>m.id===event.delta.medicationId) : state.inventory.find(i=>i.id===event.delta?.itemId);
   const suffix = stockItem ? ` You have ${event.delta.medicationId?stockItem.stock:stockItem.count} ${stockItem.unit} remaining.` : '';
+  if(p.kind==='catheterSchedule')return message('assistant',`Daily catheterization reminders saved: ${data.times.join(', ')} (${data.timezone}). Scheduled notifications are on for registered devices. If this device is not enabled yet, select Enable notifications on this device. Your care-use records and stock are unchanged.`,{options:['Enable notifications on this device','Show my tasks']});
   if(p.kind==='carePlan')return message('assistant','Medication and allergy list saved. Frequencies are stored exactly as entered. Reminder times and stock counts are not inferred. Which medication would you like to configure first?',{options:['Show my medications','Set medication reminders']});
   return message('assistant', (p.kind === 'caregiver' ? 'Invitation draft saved. It has not been sent, and no access has been granted.' : 'Saved.') + suffix, { options: ['What is next?', 'Show my supplies'] });
 }

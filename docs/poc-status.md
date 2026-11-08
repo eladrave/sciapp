@@ -1,4 +1,4 @@
-# Current status: personal care beta 0.6.0
+# Current status: personal care beta 0.7.0
 
 The primary domain is https://sciapp.eladrave.com, with the workers.dev origin retained for transition. Domain configuration and future migration steps are documented in domain-migration.md.
 
@@ -16,9 +16,9 @@ The live app uses real Cloudflare D1/R2 persistence with isolated Clerk account 
 
 ## Validation
 
-52 automated tests pass, including workerd/Miniflare personal-account API persistence/isolation, concurrent approvals, medication stock and unit validation, notification permission behavior, generic lock-screen content, retry/deduplication/expiry, and DST scheduling. JavaScript checks and build pass.
+58 automated tests pass, including workerd/Miniflare personal-account API persistence/isolation, concurrent approvals, medication stock and unit validation, notification permission behavior, generic lock-screen content, retry/deduplication/expiry, and DST scheduling. JavaScript checks and build pass.
 
-Live mobile browser checks at 412 × 915 verified generic medication/allergy import, review, explicit schedule, stock decrement once, reload persistence, Today rendering, and no horizontal overflow. Live health reports 0.6.0; notification configuration is enabled. The Cloudflare minute cron and additive D1 migration are installed.
+Live mobile browser checks at 412 × 915 verified generic medication/allergy import, review, explicit schedule, stock decrement once, reload persistence, Today rendering, and no horizontal overflow. Live health reports 0.7.0; notification configuration is enabled. The Cloudflare minute cron and additive D1 migration are installed.
 
 A live two-account Clerk smoke test also passed medication import/review, explicit schedules, stock deduction and replay safety, proposal isolation, push status and invalid-endpoint rejection. Both synthetic users and their D1 records were removed.
 
@@ -79,3 +79,11 @@ Live 0.6.0 mobile checks (412 x 915) passed with actual generated PDF, PPTX and 
 The same release adds background speech transcription for supported uploaded media through Cloudflare Workers AI Whisper, with durable D1 jobs/leases/retries, VTT preservation, recoverable pending uploads, manual review and no automatic publication. Remote video page downloading is not implemented.
 
 Live speech validation also passed: an actual synthetic MP4 produced a timestamped Whisper transcript through the deployed Worker, the job was recovered after a page reload, and a video resource draft saved without an external URL. The synthetic media original, transcript/job metadata and draft were removed after testing.
+
+## Model-first conversations and daily catheter schedules
+
+Version 0.7.0 routes chat text through the model before care parsers. Workers AI native tools separate daily catheter schedules from completed catheter use, medication logging, reminders, inventory/plan setup, preferences, lookups and confirmations. The backend validates grounded parameters and retains explicit review. Browser microphone and permission controls remain local UI actions. AI failures use labeled offline controls.
+
+Daily catheter times use timezone-aware recurring occurrences, including overnight slots. Approval enables the account reminder flag and catheter schedule; browser permission/subscription remains device-controlled. Notifications and due tasks never consume inventory. Interval mode remains separate. Unapproved legacy catheter entries derived from schedule messages are cancelled and replaced with schedule reviews on the next signed-in state load. Confirmed records are not automatically changed.
+
+Live 0.7.0 checks used a separate synthetic preview: a plain-English routine selected the native daily scheduling tool, five exact synthetic clock times were proposed, text approval saved the schedule, and What is next returned concrete upcoming daily times spanning midnight. Account notifications became enabled, the care-use count stayed zero, and inventory stayed unchanged. No horizontal overflow occurred. A real Cloudflare inference also selected the expected native tool directly. The private screenshot utterance was verified separately without committing personal schedule data. Both synthetic preview accounts were removed. No real device delivery is claimed from the mocked-provider push tests.
