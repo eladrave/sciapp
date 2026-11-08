@@ -1,4 +1,6 @@
 import { retrievalReady, memoryChat, listMemory, forgetMemory, retrieveContext, archiveMessages, backfillMemory, processIndexJobs, seedResources, syncMemoryAccounts, resourceAdmin, addResource } from './retrieval.js';
+import { processTranscriptions } from './resource-transcription.js';
+import { resourceDownload } from './resource-files.js';
 import { adminRoute } from './admin.js';
 import { accountIdForSubject } from './identity.js';
 import { createClerkClient } from '@clerk/backend';
@@ -24,7 +26,7 @@ async function boundedBody(request, max) {
   while (true) { const { value, done } = await reader.read(); if (done) break; length += value.length; if (length > max) { await reader.cancel(); throw new AppError('This upload is too large.', 413); } chunks.push(value); }
   const bytes = new Uint8Array(length); let offset = 0; for (const c of chunks) { bytes.set(c, offset); offset += c.length; } return bytes;
 }
-async function bodyJSON(request) { if (!(request.headers.get('content-type') || '').startsWith('application/json')) throw new AppError('Expected JSON.', 415); try { return JSON.parse(new TextDecoder().decode(await boundedBody(request, 16000))); } catch (e) { if (e instanceof AppError) throw e; throw new AppError('Could not read the request.'); } }
+async function bodyJSON(request, max=16000) { if (!(request.headers.get('content-type') || '').startsWith('application/json')) throw new AppError('Expected JSON.', 415); try { return JSON.parse(new TextDecoder().decode(await boundedBody(request, max))); } catch (e) { if (e instanceof AppError) throw e; throw new AppError('Could not read the request.'); } }
 async function form(request, max) { if(!(request.headers.get('content-type')||'').startsWith('multipart/form-data;')) throw new AppError('Expected a multipart upload.',415); const bytes = await boundedBody(request, max); return new Response(bytes, { headers: { 'Content-Type': request.headers.get('content-type') || '' } }).formData(); }
 async function load(env, id) {
  for (let attempt=0;attempt<4;attempt++) {
@@ -72,14 +74,14 @@ async function limit(request, env, scope, max) {
 function attachmentOwner(state, photoId) { if (typeof photoId !== 'string' || !state.photos.some(p => p.id === photoId)) throw new AppError('Photo not found.', 404); }
 
 export default {
-  async scheduled(controller,env,ctx) { ctx.waitUntil(dispatchReminders(env,controller.scheduledTime)); ctx.waitUntil((async()=>{if(retrievalReady(env)){await seedResources(env);await syncMemoryAccounts(env);await processIndexJobs(env,8);}})()); },
+  async scheduled(controller,env,ctx) { ctx.waitUntil(dispatchReminders(env,controller.scheduledTime)); ctx.waitUntil(processTranscriptions(env)); ctx.waitUntil((async()=>{if(retrievalReady(env)){await seedResources(env);await syncMemoryAccounts(env);await processIndexJobs(env,8);}})()); },
   async fetch(request, env, ctx) {
     const url = new URL(request.url); const path = url.pathname;
     try {
       if (!configuredOrigins(env,url.origin).includes(url.origin))return json({error:'This hostname is not configured for SCIapp.'},421);
       const canonical=canonicalHome(request,env);
       if(canonical)return new Response(null,{status:302,headers:{...security,Location:canonical}});
-      if (path === '/api/health') return json({ status: 'ok', version: '0.5.0', mode: 'personal-beta' });
+      if (path === '/api/health') return json({ status: 'ok', version: '0.6.0', mode: 'personal-beta' });
       if (path === '/api/config' && request.method === 'GET') return json({ appOrigin:env.APP_ORIGIN||url.origin, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null, authEnvironment: env.CLERK_PUBLISHABLE_KEY?.startsWith('pk_live_') ? 'production' : 'development', pushPublicKey:env.VAPID_PUBLIC_KEY||null, mode: env.CLERK_PUBLISHABLE_KEY ? 'authenticated' : 'preview', features: { notifications: !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY), memory:retrievalReady(env), resources:retrievalReady(env), medications:true, photos: true, transcription: !!env.AI, speech: false, caregivers: 'drafts', healthConnect: false }, notice: 'Personal care beta. Medication and allergy records are user-entered. Notifications are reminders, not guaranteed clinical alarms. Caregiver invitations remain drafts.' });
       if (!path.startsWith('/api/')) {
         if (!['GET','HEAD'].includes(request.method)) return json({ error: 'Method not allowed.' },405);
@@ -100,7 +102,7 @@ export default {
         await env.DB.prepare('INSERT INTO sessions(token_hash,account_id,expires_at) VALUES (?,?,?)').bind(await hash(token),id,Date.now()+7*86400000).run();
         return json({ state: publicState((await load(env,id)).state) },200,{ 'Set-Cookie': `__Host-sciapp=${token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=604800` });
       }
-      if(path.startsWith('/api/admin/'))return await adminRoute(request,env,ctx,{json,bodyJSON,version:'0.5.0'});
+      if(path.startsWith('/api/admin/'))return await adminRoute(request,env,ctx,{json,bodyJSON:r=>bodyJSON(r,600000),form,version:'0.6.0'});
       const id = await user(request, env);
       if (path === '/api/state' && request.method === 'GET') return json(publicState((await load(env,id)).state));
       if (path === '/api/session' && request.method === 'DELETE') { const token=(request.headers.get('cookie')||'').match(/(?:^|;\s*)__Host-sciapp=([^;]+)/)?.[1]; if(token)await env.DB.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await hash(token)).run(); return json({ok:true},200,{'Set-Cookie':'__Host-sciapp=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0'}); }
@@ -118,6 +120,7 @@ export default {
         if(path==='/api/push/subscriptions'&&request.method==='DELETE'){const data=await bodyJSON(request);await unsubscribe(env,id,data.endpoint);return json({ok:true});}
         if(path==='/api/push/test'&&request.method==='POST'){await limit(request,env,'push-test',20);const data=await bodyJSON(request);return json(await testPush(env,id,data.endpoint));}
       }
+      const resourceFile=path.match(/^\/api\/resources\/files\/(u-[a-f0-9-]+)$/);if(resourceFile&&request.method==='GET')return await resourceDownload(env,resourceFile[1]);
       if(path.startsWith('/api/memory') || path.startsWith('/api/resources')) {
         if(!retrievalReady(env))throw new AppError('Memory retrieval is not configured.',503);
         if(path==='/api/resources' && request.method==='GET')return json({admin:await resourceAdmin(env,id),resources:(await env.DB.prepare("SELECT id,title,url,created_at FROM retrieval_sources WHERE scope='shared' AND deleted_at IS NULL AND NOT EXISTS(SELECT 1 FROM resource_publication WHERE source_id=retrieval_sources.id AND status!='published') ORDER BY created_at DESC").all()).results});

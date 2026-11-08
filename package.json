@@ -1,12 +1,12 @@
 {
   "name": "sciapp",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Accessible conversational care companion for people with spinal cord injuries.",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "npm run build && node scripts/dev.mjs",
     "test": "npm run build && node --test test/*.test.js",
-    "check": "node --check worker/index.js && node --check worker/domain.js && node --check worker/conversation.js && node --check web/app.js && node --check web/auth.js && node --check worker/retrieval.js && node --check worker/assistant-actions.js && node --check web/chat-scroll.js && node --check worker/admin.js && node --check web/admin.js",
+    "check": "node --check worker/index.js && node --check worker/domain.js && node --check worker/conversation.js && node --check web/app.js && node --check web/auth.js && node --check worker/retrieval.js && node --check worker/assistant-actions.js && node --check web/chat-scroll.js && node --check worker/admin.js && node --check web/admin.js && node --check worker/resource-files.js && node --check worker/resource-transcription.js",
     "deploy": "npm run build && node scripts/deploy.mjs",
     "test:browser": "playwright test"
   },
@@ -24,7 +24,8 @@
   "homepage": "https://github.com/eladrave/sciapp#readme",
   "dependencies": {
     "@block65/webcrypto-web-push": "^2.0.0",
-    "@clerk/backend": "^3.27.0"
+    "@clerk/backend": "^3.27.0",
+    "fflate": "0.8.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.65.0",

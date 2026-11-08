@@ -1,0 +1,1 @@
+CREATE TABLE IF NOT EXISTS resource_transcription_jobs (upload_id TEXT PRIMARY KEY REFERENCES resource_uploads(id), status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at INTEGER NOT NULL DEFAULT 0, lease_until INTEGER NOT NULL DEFAULT 0);

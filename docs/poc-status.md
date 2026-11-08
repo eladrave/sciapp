@@ -1,4 +1,4 @@
-# Current status: personal care beta 0.5.0
+# Current status: personal care beta 0.6.0
 
 The primary domain is https://sciapp.eladrave.com, with the workers.dev origin retained for transition. Domain configuration and future migration steps are documented in domain-migration.md.
 
@@ -16,9 +16,9 @@ The live app uses real Cloudflare D1/R2 persistence with isolated Clerk account 
 
 ## Validation
 
-49 automated tests pass, including workerd/Miniflare personal-account API persistence/isolation, concurrent approvals, medication stock and unit validation, notification permission behavior, generic lock-screen content, retry/deduplication/expiry, and DST scheduling. JavaScript checks and build pass.
+52 automated tests pass, including workerd/Miniflare personal-account API persistence/isolation, concurrent approvals, medication stock and unit validation, notification permission behavior, generic lock-screen content, retry/deduplication/expiry, and DST scheduling. JavaScript checks and build pass.
 
-Live mobile browser checks at 412 × 915 verified generic medication/allergy import, review, explicit schedule, stock decrement once, reload persistence, Today rendering, and no horizontal overflow. Live health reports 0.5.0; notification configuration is enabled. The Cloudflare minute cron and additive D1 migration are installed.
+Live mobile browser checks at 412 × 915 verified generic medication/allergy import, review, explicit schedule, stock decrement once, reload persistence, Today rendering, and no horizontal overflow. Live health reports 0.6.0; notification configuration is enabled. The Cloudflare minute cron and additive D1 migration are installed.
 
 A live two-account Clerk smoke test also passed medication import/review, explicit schedules, stock deduction and replay safety, proposal isolation, push status and invalid-endpoint rejection. Both synthetic users and their D1 records were removed.
 
@@ -69,3 +69,13 @@ Live validation at 0.4.0 used two isolated synthetic accounts. Exact private ret
 Version 0.5.0 adds a separate `/admin` portal with password-verifier authentication stored as a Worker secret, rate-limited sign-in, four-hour server-side sessions, Secure/HttpOnly/SameSite cookies, exact-origin validation and CSRF protection. It manages shared resource drafts, reviewed publication, immutable published excerpts, archival, configurable retrieval threshold/review interval, aggregate indexing status and administrative audit events. No private user records appear in the portal. Draft and archive filtering applies to semantic hydration, resource catalogs and keyword fallback. Personal memory is always enabled and removed from Settings.
 
 Live 0.5.0 mobile verification (412 x 915): administrator login/logout, settings save, draft creation/edit/archive, publication confirmation, Activity display, HTTP 401 for unauthenticated or logged-out access, HTTP 403 for missing CSRF, and no horizontal overflow passed. The synthetic unpublished draft was removed; administrative audit entries remain. The normal app Settings view has zero memory controls.
+
+## Files and video resources
+
+Version 0.6.0 adds document/presentation uploads, editable extraction, original downloads, resource kind/provenance labels and video URLs with reviewed summaries or supplied transcripts. Separate private R2 storage and additive migration 0006 preserve the review gate. Limits: 10 MB per original, 120,000 characters of searchable text; scans, diagrams and legacy formats may require manual summaries. No automatic remote video watching or transcription is implied. Unit and Worker integration checks cover slide order/notes, DOCX text, PDF conversion responses, extraction failures/ZIP limits, multipart CSRF, upload-to-publication workflow, and private/draft/published/archived download access.
+
+Live 0.6.0 mobile checks (412 x 915) passed with actual generated PDF, PPTX and DOCX files: PDF conversion through the live Workers AI binding, PowerPoint slide text and speaker notes, Word paragraphs, reviewed draft saves, authenticated original downloads, and video-link transcript provenance. No horizontal overflow occurred. All four synthetic drafts and three R2 originals were removed after testing, with audit entries retained.
+
+The same release adds background speech transcription for supported uploaded media through Cloudflare Workers AI Whisper, with durable D1 jobs/leases/retries, VTT preservation, recoverable pending uploads, manual review and no automatic publication. Remote video page downloading is not implemented.
+
+Live speech validation also passed: an actual synthetic MP4 produced a timestamped Whisper transcript through the deployed Worker, the job was recovered after a page reload, and a video resource draft saved without an external URL. The synthetic media original, transcript/job metadata and draft were removed after testing.

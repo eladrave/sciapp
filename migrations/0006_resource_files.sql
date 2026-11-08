@@ -1,0 +1,3 @@
+CREATE TABLE IF NOT EXISTS resource_uploads (id TEXT PRIMARY KEY, r2_key TEXT NOT NULL, file_name TEXT NOT NULL, mime_type TEXT NOT NULL, byte_size INTEGER NOT NULL, extraction_status TEXT NOT NULL, extracted_text TEXT NOT NULL DEFAULT '', extraction_note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS resource_materials (source_id TEXT PRIMARY KEY REFERENCES retrieval_sources(id), kind TEXT NOT NULL CHECK(kind IN ('link','document','video')), text_kind TEXT NOT NULL CHECK(text_kind IN ('summary','transcript','extracted')), upload_id TEXT REFERENCES resource_uploads(id));
+CREATE INDEX IF NOT EXISTS resource_material_upload ON resource_materials(upload_id);

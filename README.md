@@ -4,7 +4,7 @@ Accessible conversational care companion for people with spinal cord injuries.
 
 ## Status
 
-Personal care beta at **https://sciapp.eladrave.com** (0.5.0).
+Personal care beta at **https://sciapp.eladrave.com** (0.6.0).
 
 Clerk identities own isolated records in Cloudflare D1. Signed-in accounts have their own medications, allergies, inventory, settings, and confirmed care journal. The separate seven-day sample preview remains available. Production Clerk and Google sign-in are active. This remains a personal-care beta, not a completed production healthcare qualification.
 
@@ -85,3 +85,7 @@ Use synthetic fixtures during initial development. Never commit credentials, per
 Personal memory and shared resource semantic search use separate Cloudflare Vectorize indexes. See [memory and resources](docs/memory-and-resources.md) for ownership, retention, chat controls, publishing and operations.
 
 Administrator portal: `/admin`. Shared resources have draft, published and archived states, review dates, search settings, aggregate indexing status and an administrative audit trail. Configure the password verifier through the `ADMIN_PASSWORD_HASH` Worker secret. See [administration](docs/admin-portal.md). Personal memory is always on for signed-in users and is not a Settings control.
+
+Admin resources also accept private original files (up to 10 MB) and video URLs with supplied summaries or transcripts. PDF, DOCX, PPTX, ODT and text extraction feeds an editable draft; publication remains manual. See docs/admin-portal.md for extraction and download limits.
+
+Uploaded MP3/WAV/M4A/MP4/WebM/OGG/FLAC can generate background speech transcripts through Cloudflare Workers AI. Pending jobs survive page closure; publication still requires review. Video page URLs are not automatically downloaded.

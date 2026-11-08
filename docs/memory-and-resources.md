@@ -30,10 +30,10 @@ Resource privileges live in server-managed `resource_admins(account_id)`. They a
 - `DELETE /api/memory/:sourceId`: owner-only removal.
 - `POST /api/memory/search`: `{ "query": "my voice preferences" }`.
 - `GET /api/resources`: shared resource catalog and caller's administrator status.
-- `POST /api/resources`: admin-only `{ "title": "...", "url": "https://...", "text": "..." }`, maximum 12,000 characters of supplied text.
+- `POST /api/resources`: admin-only `{ "title": "...", "url": "https://...", "text": "..." }`, maximum 120,000 characters of supplied text.
 - Account export includes all active private memories in addition to care records.
 
-Resources accept supplied excerpts, with source URLs as citations. They do not fetch arbitrary URLs or parse PDFs yet. Review medical resources before publication and use content you can share. This seed collection needs expansion and clinical review before being treated as comprehensive guidance.
+Resources accept supplied excerpts, with source URLs as citations. They do not fetch arbitrary URLs. The administrator portal can extract reviewed text from uploaded PDF, DOCX, PPTX and other supported files, and can attach video links with supplied summaries/transcripts. See admin-portal.md. Review medical resources before publication and use content you can share. This seed collection needs expansion and clinical review before being treated as comprehensive guidance.
 
 ## Reliability and deployment
 

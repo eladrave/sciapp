@@ -4,7 +4,7 @@ export const EMBEDDING_MODEL='@cf/baai/bge-base-en-v1.5';
 export const retrievalReady=env=>!!(env.DB&&env.AI&&env.PERSONAL_MEMORY&&env.SHARED_RESOURCES);
 const digest=async text=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)))].map(v=>v.toString(16).padStart(2,'0')).join('');
 export const ownerNamespace=async id=>'u-'+(await digest(id)).slice(0,48);
-export function splitText(text){return text.match(/[\s\S]{1,500}/g)||[];}
+export function splitText(text){const source=/^WEBVTT\b|\d{2}:\d{2}[^\n]*-->/m.test(text)?text.split(/\r?\n/).filter(line=>line.trim()&&!/^(?:WEBVTT|\d+$|\d{2}:\d{2}[^\n]*-->)/.test(line.trim())).join(' '):text;return source.match(/[\s\S]{1,500}/g)||[];}
 export async function memorySettings(env,id){const row=await env.DB.prepare('SELECT backfilled,last_sync_at FROM memory_settings WHERE account_id=?').bind(id).first();return {enabled:1,backfilled:row?.backfilled||0,last_sync_at:row?.last_sync_at||0};}
 export async function resourceAdmin(env,id){return !!await env.DB.prepare('SELECT account_id FROM resource_admins WHERE account_id=?').bind(id).first();}
 async function addSource(env,{id,scope,accountId=null,title,url=null,body,observedAt=null}){
@@ -78,7 +78,7 @@ export async function retrieveContext(env,id,text){
   if(searches[i].status!=='fulfilled')continue;
   for(const match of searches[i].value.matches||[]){
    if(match.score<threshold)continue;
-   const row=await env.DB.prepare('SELECT c.body,s.id,s.title,s.url,s.created_at FROM retrieval_chunks c JOIN retrieval_sources s ON s.id=c.source_id WHERE c.id=? AND c.scope=? AND (?=\'shared\' OR c.account_id=?) AND c.deleted_at IS NULL AND s.deleted_at IS NULL AND (c.scope=\'personal\' OR NOT EXISTS(SELECT 1 FROM resource_publication WHERE source_id=s.id AND status!=\'published\'))').bind(match.id,i?'shared':'personal',i?'shared':'personal',id).first();
+   const row=await env.DB.prepare('SELECT c.body,s.id,s.title,s.url,s.created_at,m.kind,m.text_kind FROM retrieval_chunks c JOIN retrieval_sources s ON s.id=c.source_id LEFT JOIN resource_materials m ON m.source_id=s.id WHERE c.id=? AND c.scope=? AND (?=\'shared\' OR c.account_id=?) AND c.deleted_at IS NULL AND s.deleted_at IS NULL AND (c.scope=\'personal\' OR NOT EXISTS(SELECT 1 FROM resource_publication WHERE source_id=s.id AND status!=\'published\'))').bind(match.id,i?'shared':'personal',i?'shared':'personal',id).first();
    if(row)result[i?'sources':'memories'].push({...row,score:match.score});
   }
  }
@@ -116,7 +116,7 @@ export async function syncMemoryAccounts(env,max=4){
 }
 
 export function resourceInput(data){
- if(!data||typeof data.title!=='string'||!data.title.trim()||data.title.length>200||typeof data.text!=='string'||data.text.trim().length<30||data.text.length>12000)throw new AppError('Provide a title and resource text between 30 and 12,000 characters.');
+ if(!data||typeof data.title!=='string'||!data.title.trim()||data.title.length>200||typeof data.text!=='string'||data.text.trim().length<30||data.text.length>120000)throw new AppError('Provide a title and resource text between 30 and 120,000 characters.');
  let url;try{url=new URL(data.url);if(url.protocol!=='https:'||url.username||url.password)throw Error();}catch{throw new AppError('Provide an HTTPS source URL.');}
  return {title:data.title.trim(),url:url.href,text:data.text.trim()};
 }
