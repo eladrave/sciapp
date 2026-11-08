@@ -1,4 +1,4 @@
-# Current status: personal care beta 0.2.1
+# Current status: personal care beta 0.2.2
 
 The primary domain is https://sciapp.eladrave.com, with the workers.dev origin retained for transition. Domain configuration and future migration steps are documented in domain-migration.md.
 
@@ -16,9 +16,9 @@ The live app uses real Cloudflare D1/R2 persistence with isolated Clerk account 
 
 ## Validation
 
-39 automated tests pass, including workerd/Miniflare personal-account API persistence/isolation, concurrent approvals, medication stock and unit validation, notification permission behavior, generic lock-screen content, retry/deduplication/expiry, and DST scheduling. JavaScript checks and build pass.
+41 automated tests pass, including workerd/Miniflare personal-account API persistence/isolation, concurrent approvals, medication stock and unit validation, notification permission behavior, generic lock-screen content, retry/deduplication/expiry, and DST scheduling. JavaScript checks and build pass.
 
-Live mobile browser checks at 412 × 915 verified generic medication/allergy import, review, explicit schedule, stock decrement once, reload persistence, Today rendering, and no horizontal overflow. Live health reports 0.2.1; notification configuration is enabled. The Cloudflare minute cron and additive D1 migration are installed.
+Live mobile browser checks at 412 × 915 verified generic medication/allergy import, review, explicit schedule, stock decrement once, reload persistence, Today rendering, and no horizontal overflow. Live health reports 0.2.2; notification configuration is enabled. The Cloudflare minute cron and additive D1 migration are installed.
 
 A live two-account Clerk smoke test also passed medication import/review, explicit schedules, stock deduction and replay safety, proposal isolation, push status and invalid-endpoint rejection. Both synthetic users and their D1 records were removed.
 
@@ -34,8 +34,12 @@ Catheter reminders fire once when due, then await another confirmed catheterizat
 
 ## Remaining production work
 
-The existing Clerk application has been claimed as sciapp in the owner’s personal workspace, preserving its development instance and keys. The owned app domain is connected. Configure a production instance and production OAuth credentials, then migrate existing development identities deliberately. Do not replace auth keys without an identity mapping, which would orphan existing records.
+The existing Clerk application has been claimed as sciapp in the owner’s personal workspace, preserving its development instance and keys. The owned app domain is connected. A production instance is provisioned and its DNS is verified. Google OAuth is configured in the dedicated sciapp-eladrave project with External / In production audience and zero production users. Existing verified user identity transfer requires explicit approval following an automatic approval-review rejection. No real users were imported and the live Worker still uses its development instance. Finish migration and verify continuity before installing production keys. Do not replace auth keys without an identity mapping, which would orphan existing records.
 
-Caregiver invitations remain drafts, without messages or access grants. No EHR/Health Connect/Bluetooth, native Android alarms, offline record synchronization, clinical monitoring, or WhatsApp connection exists. Formal privacy/security/service-term review, account deletion UX, restore testing and wider load/operational qualification remain launch work. The app is a personal beta, not a fully qualified healthcare production service.
+Caregiver invitations remain drafts, without messages or access grants. No EHR/Health Connect/Bluetooth, native Android alarms, offline record synchronization, clinical monitoring, or WhatsApp connection exists. Public privacy and usage pages now describe the implemented beta behavior. Formal privacy/security/service-term review, account deletion UX, restore testing and wider load/operational qualification remain launch work. The app is a personal beta, not a fully qualified healthcare production service.
 
 Personal photos stay private in R2 and are experimental inputs requiring review. Urine appearance cannot establish or exclude UTI; image volume accuracy has not been validated for specific bags. Starter retrieval remains a small curated summary collection with primary-resource links, not a complete medical knowledge base.
+
+## Authentication migration preparation
+
+A server-managed account_identities table and resolver preserve stable D1/R2 account identifiers after Clerk identity changes. The app never links accounts from a browser-provided email. The explicit administration script imports only verified existing owners, uses an external identity marker, refuses ambiguous production collisions, and writes a private mapping plan. It requires --apply and has not been authorized to run against real identities. Existing development keys are retained until approval, mapping, and full sign-in checks. One verified real owner and one stale orphan account were identified through read-only preparation; the orphan is retained without a new identity.

@@ -1,3 +1,4 @@
+import { accountIdForSubject } from './identity.js';
 import { createClerkClient } from '@clerk/backend';
 import { initialState, AppError, message, proposal, finishProposal, undoEvent, view, now, uid } from './domain.js';
 import { migratePersonalState } from './domain.js';
@@ -51,7 +52,7 @@ async function user(request, env) {
     const client = createClerkClient({ publishableKey: pk, secretKey: env.CLERK_SECRET_KEY || undefined, jwtKey: env.CLERK_JWT_KEY || undefined });
     const auth = await client.authenticateRequest(request, { authorizedParties: [new URL(request.url).origin], acceptsToken: 'session_token' });
     const data = auth.toAuth(); if (!data?.userId) throw new AppError('Please sign in again.', 401);
-    const id = `clerk:${data.userId}`; await ensureAccount(env, id); return id;
+    const id = await accountIdForSubject(env.DB,data.userId); await ensureAccount(env, id); return id;
   }
   const token = (request.headers.get('cookie') || '').match(/(?:^|;\s*)__Host-sciapp=([^;]+)/)?.[1];
   if (!token) throw new AppError('Start a private preview or sign in first.', 401);
@@ -73,11 +74,11 @@ export default {
     const url = new URL(request.url); const path = url.pathname;
     try {
       if (!configuredOrigins(env,url.origin).includes(url.origin))return json({error:'This hostname is not configured for SCIapp.'},421);
-      if (path === '/api/health') return json({ status: 'ok', version: '0.2.1', mode: 'personal-beta' });
+      if (path === '/api/health') return json({ status: 'ok', version: '0.2.2', mode: 'personal-beta' });
       if (path === '/api/config' && request.method === 'GET') return json({ appOrigin:env.APP_ORIGIN||url.origin, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null, authEnvironment: env.CLERK_PUBLISHABLE_KEY?.startsWith('pk_live_') ? 'production' : 'development', pushPublicKey:env.VAPID_PUBLIC_KEY||null, mode: env.CLERK_PUBLISHABLE_KEY ? 'authenticated' : 'preview', features: { notifications: !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY), medications:true, photos: true, transcription: !!env.AI, speech: false, caregivers: 'drafts', healthConnect: false }, notice: 'Personal care beta. Medication and allergy records are user-entered. Notifications are reminders, not guaranteed clinical alarms. Caregiver invitations remain drafts.' });
       if (!path.startsWith('/api/')) {
         if (!['GET','HEAD'].includes(request.method)) return json({ error: 'Method not allowed.' },405);
-        const asset = assets[path === '/' ? '/index.html' : path];
+        const asset = assets[({ '/':'/index.html', '/privacy':'/privacy.html', '/terms':'/terms.html' })[path] || path];
         if (!asset) return new Response('Not found', { status: 404, headers: security });
         return new Response(request.method === 'HEAD' ? null : asset.body, { headers: { ...security, 'Content-Type': asset.type, 'Content-Security-Policy': contentSecurityPolicy(env.CLERK_PUBLISHABLE_KEY) } });
       }

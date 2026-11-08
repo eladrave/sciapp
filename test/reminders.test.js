@@ -38,7 +38,7 @@ test('subscription validation blocks arbitrary hosts, credentials, invalid keys'
 test('scheduled dispatch encrypts generic payloads, retries failures, deduplicates and expires dead endpoints',async()=>{
  const mf=new Miniflare({workers:[{config:{name:'test',compatibilityDate:'2026-11-08',env:{DB:{type:'d1',id:'DB'}},manifest:{mainModule:'index.js',modules:{'index.js':{type:'esm',contents:'export default {fetch(){return new Response("ok")}}'}}}}}]});
  try{
-  const db=await mf.getD1Database('DB');for(const n of ['0001_initial.sql','0002_notifications.sql'])await db.exec((await readFile(`migrations/${n}`,'utf8')).replace(/\n/g,' '));
+  const db=await mf.getD1Database('DB');for(const n of ['0001_initial.sql','0002_notifications.sql','0003_account_identities.sql'])await db.exec((await readFile(`migrations/${n}`,'utf8')).replace(/\n/g,' '));
   const s=state(),at=Date.parse('2026-11-08T13:00:20Z');
   for(const id of ['clerk:a','clerk:b'])await db.prepare('INSERT INTO accounts VALUES (?,?,0,?)').bind(id,JSON.stringify(s),new Date(at).toISOString()).run();
   const pair=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']);const jwk=await crypto.subtle.exportKey('jwk',pair.privateKey);

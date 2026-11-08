@@ -14,7 +14,7 @@ let db=databases.find(d=>d.name==='sciapp-poc');
 if(!db)db=await api(`/accounts/${account}/d1/database`,'POST',{name:'sciapp-poc',primary_location_hint:'enam'});
 const buckets=await api(`/accounts/${account}/r2/buckets`);
 if(!buckets.buckets.some(b=>b.name==='sciapp-poc-photos'))await api(`/accounts/${account}/r2/buckets`,'POST',{name:'sciapp-poc-photos',locationHint:'enam'});
-for(const migration of ['0001_initial.sql','0002_notifications.sql'])await api(`/accounts/${account}/d1/database/${db.uuid}/query`,'POST',{sql:await readFile(`migrations/${migration}`,'utf8')});
+for(const migration of ['0001_initial.sql','0002_notifications.sql','0003_account_identities.sql'])await api(`/accounts/${account}/d1/database/${db.uuid}/query`,'POST',{sql:await readFile(`migrations/${migration}`,'utf8')});
 const bindings=[{type:'plain_text',name:'APP_ORIGIN',text:deployment.appOrigin},{type:'plain_text',name:'ADDITIONAL_APP_ORIGINS',text:deployment.additionalAppOrigins.join(',')},{type:'d1',name:'DB',id:db.uuid},{type:'r2_bucket',name:'PHOTOS',bucket_name:'sciapp-poc-photos'},{type:'ai',name:'AI'}];
 for(const name of ['CLERK_PUBLISHABLE_KEY','CLERK_SECRET_KEY','VAPID_PUBLIC_KEY','VAPID_PRIVATE_KEY'])if(process.env[name])bindings.push({type:'secret_text',name,text:process.env[name]});
 const metadata={main_module:'worker.js',compatibility_date:'2026-11-08',compatibility_flags:['nodejs_compat'],bindings,keep_bindings:['secret_text'],observability:{enabled:true,logs:{enabled:true,invocation_logs:false},traces:{enabled:true},redact_query_string:true}};

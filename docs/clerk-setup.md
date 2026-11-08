@@ -21,7 +21,23 @@ The supported direct Dashboard claim flow, obtained from the official CLI's `ope
 
 The [existing application Dashboard](https://dashboard.clerk.com/apps/app_3LpVf5GKSYlQLcyUAfyBK9pkf8V/instances/ins_3LpVf12ufx6m64WvQYmQBR5LTFq) now manages this instance. The public web origin is `https://sciapp.eladrave.com`; a custom web domain does not itself convert the Clerk development instance into a production instance.
 
-Production authentication has not been provisioned. A subsequent coordinated rollout must create the production instance on the selected owned domain, configure its DNS and its own Google OAuth credentials, and establish identity mapping before changing Worker keys. Development and production instances have separate user pools. No production key switch or user-record migration was attempted during the domain deployment. Keep a future domain configurable through deployment settings and review Clerk domain, DNS, OAuth redirects, CSP, and allowed origins together when it changes.
+On 2026-11-08, a production instance was created inside the same application by cloning development authentication and theme settings, without selecting an upgrade or paid feature. The production instance is `ins_3LppIQO7gxZVoOIQmmb9BsJ6hmJ`, and the original development instance remains intact. The app domain is `sciapp.eladrave.com`, configured as a secondary application because the parent `eladrave.com` Clerk domain is already used by another application. The production Frontend API is `clerk.sciapp.eladrave.com`.
+
+Live instance keys were captured privately with filesystem mode 600 and were not committed. Worker keys have not been switched. Development and production instances have separate user pools. Existing-user migration and identity mapping must be approved and completed before that switch; the current application continues using its development identity pool. Keep a future domain configurable through deployment settings and review Clerk domain, DNS, OAuth redirects, CSP, and allowed origins together when it changes.
+
+The production domain requires these DNS-only CNAME records in the `eladrave.com` zone:
+
+| Name | Target |
+| --- | --- |
+| `clerk.sciapp` | `frontend-api.clerk.services` |
+| `accounts.sciapp` | `accounts.clerk.services` |
+| `clkmail.sciapp` | `mail.18t6g788cfgj.clerk.services` |
+| `clk._domainkey.sciapp` | `dkim1.18t6g788cfgj.clerk.services` |
+| `clk2._domainkey.sciapp` | `dkim2.18t6g788cfgj.clerk.services` |
+
+The exact Google OAuth redirect URI shown by the production instance is `https://clerk.sciapp.eladrave.com/v1/oauth_callback`. The dedicated SCIapp Google OAuth client credentials were saved to the production Google connection. A page reload confirmed the expected client ID persisted, the connection was enabled for sign-up and sign-in, and the “Setup required” warning was absent. No owner Google sign-in or real production-user creation was performed as part of that verification.
+
+Production setup checks confirmed all five DNS records verified (Frontend API, account portal, and email 3/3). The Frontend API environment endpoint returned HTTP 200 over validated TLS. The account portal host also completed validated TLS, returning HTTP 403 without an authenticated session. The privately retained live API key successfully authenticated a Backend API instance lookup and returned the expected production instance ID. No development user was deleted or imported during this setup. Provider configuration is prepared, but the running app remains on development keys pending explicit approval for existing-account continuity.
 
 ## Synthetic authentication checks
 
@@ -59,3 +75,9 @@ const { userId } = state.toAuth();
 ```
 
 Use the verified `userId` for database ownership. Caregiver access requires a separate app authorization check against an accepted grant. Store secrets as Worker secrets, and do not log session tokens.
+
+### Google audience publication
+
+The dedicated Google Cloud project sciapp-eladrave has a SCIapp Web Production OAuth client configured for the app origin and exact Clerk callback above. The client secret is private and not stored in this repository. Branding uses the live /privacy and /terms pages, with homepage links. Audience is External / In production, with zero users at setup. No extra Google API access or real-owner OAuth sign-in test was performed.
+
+The live Worker remains on development keys. An automatic approval review blocked copying the existing verified owner identity to the new production instance, requiring explicit user approval for that sensitive transfer. The prepared account_identities mapping preserves D1/R2 ownership after approval. Do not treat completed provider settings as completed authentication cutover.
