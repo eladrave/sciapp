@@ -35,6 +35,8 @@ References: [Clerk testing overview](https://clerk.com/docs/guides/development/t
 
 On 2026-11-08, a dedicated synthetic test user consumed a one-time sign-in ticket in a real browser on `https://sciapp.elad-rave-scm.workers.dev`. Its genuine Clerk session was accepted by the deployed Worker. The positive integration script passed all five checks: anonymous requests rejected, genuine Clerk token accepted, authenticated account does not inherit preview data, authenticated history persists separately from preview history, and an invalid bearer token cannot fall back to a preview cookie. The synthetic Clerk user was subsequently deleted, and a follow-up lookup returned 404. The interactive Google provider flow was not performed.
 
+After the ownership claim and custom-domain deployment, a separate synthetic account authenticated through the official Frontend API ticket flow with `https://sciapp.eladrave.com` as its origin. The resulting JWT carried that exact `azp`; the deployed `/api/state` returned 200 with personal mode, no medication records, no events, and no seeded stock. The test Clerk user and its single D1 account row were removed, with zero matching account rows remaining. This domain check verifies session acceptance, not the production Google provider setup.
+
 ## Browser
 
 Use [ClerkJS](https://clerk.com/docs/js-frontend/getting-started/quickstart) with the publishable key returned by `/api/config`. Mount Clerk's prebuilt sign-in and account controls. Get the active session token and send it as `Authorization: Bearer <token>` to API requests. Expose no secret key in the browser. A missing key must produce an explicit synthetic preview state, never a fake signed-in identity.
