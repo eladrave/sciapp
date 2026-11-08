@@ -1,6 +1,6 @@
 # POC delivery status
 
-2026-11-08, version 0.1.0.
+2026-11-08, version 0.1.1.
 
 ## Delivered
 
@@ -13,7 +13,7 @@ Data: D1 with per-account optimistic concurrency; private R2 originals with acco
 | Check | Result |
 | --- | --- |
 | Build and JavaScript checks | Passed |
-| Domain and Worker integration tests | 10 passed |
+| Domain and Worker integration tests | 13 passed |
 | Concurrent approvals and reversal | Passed; one catheter deducted once, undo restores stock |
 | Session and photo ownership, cross-site rejection | Passed in workerd/Miniflare |
 | Live browser care logging and refresh | Passed; approved entry persisted |
@@ -38,3 +38,7 @@ Only example medication is configured. Photos and bag estimates must be confirme
 Caregiver drafts do not send an email, connect another account, or grant access. Clinical alarms, browser background reminders, EHR/Health Connect/Bluetooth, offline synchronization, Android packaging, and WhatsApp remain subsequent milestones. The app is not an emergency monitoring service.
 
 Daily preview limits apply per client IP: 30 sessions, 150 chat requests, 60 AI/transcription calls, and 30 photos. Shared networks share these limits. These limits are request quotas, not an account-wide dollar spending cap. Cloudflare usage is billed to the deploying account under its existing plan and allowance.
+
+## Voice confirmation fix (0.1.1)
+
+Natural short confirmations such as approved, yes please, confirmed, and go ahead resolve the current pending review directly. Repeated confirmations do not create another review or deduct supplies twice. Negated/uncertain replies are cancelled or clarified, and explicit volume corrections create a fresh review without saving the old value. Browser and server share the same decision grammar. Final recognized short confirmations use a 1.2-second send pause; interim or longer speech retains the configured pause.

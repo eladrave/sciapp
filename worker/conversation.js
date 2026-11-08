@@ -1,5 +1,6 @@
 import { AppError, message, proposal, now } from './domain.js';
 import { retrieve } from './resources.js';
+import { conversationControl } from '../web/conversation-controls.js';
 
 export const CHAT_MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 const extractNumber = s => { const m = s.match(/\b(\d+(?:\.\d+)?)\b/); return m ? Number(m[1]) : null; };
@@ -17,6 +18,28 @@ export async function analyzePhoto(env, photo, instruction) {
 
 export function handleKnown(state, text, photoData = null, photoId = null) {
   const t = text.trim(); const lower = t.toLowerCase();
+  const pending = state.proposals.filter(p => p.status === 'pending');
+  const current = pending.at(-1);
+  // Resolve corrections before confirmations; “yes, but make that 450” must not save 350.
+  if (!photoData && current?.kind === 'catheterization' && /\b(actually|change|instead|correction|make (?:it|that))\b/i.test(t)) {
+    const volume = extractNumber(t);
+    if (volume != null) return proposal(state, 'catheterization', { ...current.params, volume });
+  }
+  const control = photoData ? null : conversationControl(t);
+  if (control === 'approve') {
+    if (current) return { approveId: current.id };
+    return message('assistant', state.proposals.at(-1)?.status === 'approved'
+      ? 'That action is already saved. Nothing was counted twice.'
+      : 'There is no action awaiting approval. Nothing was changed.', { options: ['Log catheterization', 'Show my supplies'] });
+  }
+  if (control === 'cancel') {
+    if (current) return { cancelId: current.id };
+    state.draft = null;
+    return message('assistant', 'Cancelled. Nothing was changed.', { options: ['Log catheterization', 'Add supplies'] });
+  }
+  if (current && (control === 'hold' || control === 'clarify')) return message('assistant', control === 'hold'
+    ? 'Take your time. I have not saved this. Say approved, change, or cancel when you are ready.'
+    : 'I have not saved this. Would you like to approve this review, change it, or cancel?', { options: ['Approve', 'Change', 'Cancel'] });
   if (/^(cancel|never mind|nevermind|stop|start over)$/i.test(t)) { state.draft = null; for (const p of state.proposals) if (p.status === 'pending') { p.status = 'cancelled'; for (const m of state.messages) if (m.proposal?.id === p.id) m.proposal.status = 'cancelled'; } return message('assistant', 'Okay. I cleared the unfinished action.', { options: ['Log catheterization', 'Add supplies', 'Settings'] }); }
   if (/\bhands[ -]?free\b/.test(lower)) {
     if(/\b(off|disable|stop)\b/.test(lower))return proposal(state,'settings',{handsFree:false});
@@ -36,9 +59,6 @@ export function handleKnown(state, text, photoData = null, photoId = null) {
     }
     return message('assistant', `Photo saved. I could not reliably extract a supported label or measurement. ${String(photoData.notes || '').slice(0, 300)} What would you like to record from it?`, { options: ['Add supplies', 'Record blood pressure'], photoId, photoUrl: `/api/photos/${photoId}` });
   }
-  const pending = state.proposals.filter(p => p.status === 'pending');
-  if (/^(yes|approve|save|confirm|looks good)$/i.test(t) && pending.length) return { approveId: pending.at(-1).id };
-  if (/^(no|cancel)$/i.test(t) && pending.length) return { cancelId: pending.at(-1).id };
   if (/^(change|edit|change amount)$/i.test(t) && pending.length) {
     const p = pending.at(-1); p.status = 'cancelled'; for (const m of state.messages) if (m.proposal?.id === p.id) m.proposal.status = 'cancelled';
     if (p.kind === 'catheterization') { state.draft = { kind: 'catheterization' }; return message('assistant', 'What volume should I use instead?', { options: ['No volume', '350 mL', '450 mL'] }); }

@@ -16,7 +16,10 @@ test('Worker integration: private sessions, approval concurrency, persistence, u
   const approvals=await Promise.all([req(`/api/actions/${p}`,'POST',{decision:'approve'},a),req(`/api/actions/${p}`,'POST',{decision:'approve'},a)]);
   assert.ok(approvals.every(r=>r.status===200));
   let s=await(await req('/api/state','GET',null,a)).json();assert.equal(s.inventory[0].count,59);assert.equal(s.events.length,1);
-  const eventId=s.events[0].id;await req(`/api/events/${eventId}/undo`,'POST',null,a);s=await(await req('/api/state','GET',null,a)).json();assert.equal(s.inventory[0].count,60);
+  r=await req('/api/chat','POST',{message:'I catheterized 450 mL'},a);const review=(await r.json()).reply.proposal;
+  r=await req('/api/chat','POST',{message:'Approved.'},a);let confirmed=await r.json();assert.equal(r.status,200);assert.equal(confirmed.state.inventory[0].count,58);assert.equal(confirmed.state.events.length,2);assert.equal(confirmed.state.messages.filter(m=>m.proposal?.id===review.id).at(-1).proposal.status,'approved');assert.equal(confirmed.reply.proposal,undefined);
+  r=await req('/api/chat','POST',{message:'approved'},a);confirmed=await r.json();assert.equal(confirmed.state.inventory[0].count,58);assert.equal(confirmed.state.events.length,2);assert.match(confirmed.reply.content,/already saved/);
+  const eventId=s.events[0].id;await req(`/api/events/${eventId}/undo`,'POST',null,a);s=await(await req('/api/state','GET',null,a)).json();assert.equal(s.inventory[0].count,59);
   assert.equal((await req('/api/chat','POST',{message:'Log catheterization'},a,{origin:'https://evil.test'})).status,403);
   assert.equal((await req('/api/state','GET',null,b)).status,200);assert.equal((await(await req('/api/state','GET',null,b)).json()).events.length,0);
   const f=new FormData();f.append('photo',new Blob([Uint8Array.from([137,80,78,71,13,10,26,10])],{type:'image/png'}),'label.png');

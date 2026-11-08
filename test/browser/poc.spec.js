@@ -13,5 +13,5 @@ test('foreground voice can propose and approve care without a send tap',async({p
  await start(page);await say(page,'Wait 2 seconds');await page.getByRole('button',{name:'Approve',exact:true}).click();await expect(page.getByText('Saved.',{exact:true})).toBeVisible();
  await say(page,'Turn hands-free on');await page.getByRole('button',{name:'Approve',exact:true}).click();await expect(page.getByText('Hands-free listening',{exact:true})).toBeVisible();
  await page.evaluate(()=>window.__voiceTest.instance.onresult({results:[[{transcript:'I catheterized 450 mL'}]]}));await expect(page.getByRole('button',{name:'Approve',exact:true})).toBeVisible({timeout:10000});
- await page.evaluate(()=>window.__voiceTest.instance.onresult({results:[[{transcript:'Approve'}]]}));await expect(page.getByText('Saved. You have 59 catheters remaining.',{exact:true})).toBeVisible({timeout:10000});
+ await page.evaluate(()=>window.__voiceTest.instance.onresult({results:[Object.assign([{transcript:'Approved.'}],{isFinal:true})]}));await expect(page.getByText('Saved. You have 59 catheters remaining.',{exact:true})).toBeVisible({timeout:10000});
 });

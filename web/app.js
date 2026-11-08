@@ -1,3 +1,4 @@
+import { confirmationDelay } from './conversation-controls.js';
 const $ = (selector) => document.querySelector(selector);
 const ui = Object.fromEntries(['welcome','app','start-preview','sign-in','welcome-error','messages','message','composer','send','error','thinking','mute','mute-label','mute-icon','voice','voice-label','recording-status','photo','photo-input','attachment','attachment-image','attachment-status','remove-photo','panel','conversation','page-label','composer-area','avatar','date-label','composer-hint','account','announcer'].map(id => [id, document.getElementById(id)]));
 let state, config, activePage = 'Conversation', busy = false, photo = null, photoPreview, recorder, recordStream, recording = false, recognition, audioChunks = [], uploadBusy = false;
@@ -181,8 +182,11 @@ function resumeHandsFree() {
   const transcript = Array.from(event.results).map(result => result[0].transcript).join(' ').trim();
   ui.message.value = [draft,transcript].filter(Boolean).join(' ');
   clearTimeout(silenceTimer);
-  const pause = Math.max(2000,Math.min(15000,Number(state.settings.voicePauseMs) || 5000));
-  ui['recording-status'].textContent = `Listening · sends after ${pause / 1000}s pause`;
+  const normal = Math.max(2000,Math.min(15000,Number(state.settings.voicePauseMs) || 5000));
+  const final = Array.from(event.results).every(result => result.isFinal);
+  const pending = state.messages.some(m => m.proposal?.status === 'pending' && Date.parse(m.proposal.expiresAt) > Date.now());
+  const pause = confirmationDelay(transcript, { pending, final, draft, normal });
+  ui['recording-status'].textContent = pause < normal ? 'Heard your answer · sending…' : `Listening · sends after ${pause / 1000}s pause`;
   silenceTimer = setTimeout(() => { if(generation === accountGeneration && state?.settings?.handsFree && !handsFreePaused && ui.message.value.trim()) {stopHandsFree(); send();} },pause);
  };
  current.onerror = event => {
