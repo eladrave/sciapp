@@ -28,3 +28,5 @@
 .health-card{overflow-wrap:anywhere}.health-card button{margin:5px 5px 0 0}.health-card h3{font-size:1.05rem}
 
 .profile-name{font-size:1.15rem;font-weight:600}.profile-section{padding-top:16px;margin-top:16px;border-top:1px solid #dce2d8}.profile-section h3{font-size:1.05rem}.profile-medication{padding:12px 0;border-bottom:1px solid #edf0e9}.profile-medication h4{margin:0;font-size:1rem}.profile-schedule{color:#245b4b;font-weight:600;overflow-wrap:anywhere}.profile-medication p{margin:6px 0}
+
+.photo-options{background:#dfebe3;border:2px solid #276b56;box-shadow:0 8px 24px #143d2f30;padding:16px}.photo-options button{background:#246b55;color:#fff;border:2px solid #174c3d;font-weight:700;min-height:48px}.photo-options button:hover{background:#174c3d}.photo-options button:focus-visible{outline:3px solid #123c30;outline-offset:3px}.photo-options span{color:#213f32;font-weight:600}

@@ -34,7 +34,7 @@ export function proposal(state, kind, params) {
   if (kind === 'catheterization') {
     params = { volume: params.volume == null ? null : number(params.volume, 'volume in mL', 0, 3000), photoId: params.photoId || null, time: params.time || now() };
     if (!Number.isFinite(Date.parse(params.time))) throw new AppError('Please provide a valid time.');
-    title = 'Record catheterization'; details = [params.volume == null ? 'Volume not recorded' : `${params.volume} mL`, 'Use one new catheter', state.inventory.find(i=>i.id==='catheter')?.count==null?'Stock count not configured; record use without deducting a balance':'Deduct 1 catheter from your supplies'];
+    title = 'Record catheterization'; details = [`Time: ${new Intl.DateTimeFormat('en-US',{timeZone:state.settings.timezone||'UTC',dateStyle:'medium',timeStyle:'short'}).format(new Date(params.time))} (${state.settings.timezone||'UTC'})`, ...(params.photoId?['Estimated from the attached bag photo; check the scale before approval']:[]), params.volume == null ? 'Volume not recorded' : `${params.volume} mL`, 'Use one new catheter', state.inventory.find(i=>i.id==='catheter')?.count==null?'Stock count not configured; record use without deducting a balance':'Deduct 1 catheter from your supplies'];
   } else if (kind === 'supplies') {
     params = { name: string(params.name || 'Catheters', 'product name'), boxes: number(params.boxes, 'number of boxes', 1, 1000), perBox: number(params.perBox, 'units per box', 1, 1000), photoId: params.photoId || null };
     if (!Number.isInteger(params.boxes) || !Number.isInteger(params.perBox)) throw new AppError('Box and unit counts must be whole numbers.');
@@ -49,7 +49,7 @@ export function proposal(state, kind, params) {
   } else if (kind === 'carePlan') {
     const medications = params.medications || [], allergies = params.allergies || [];
     if (!Array.isArray(medications) || medications.length > 50 || !Array.isArray(allergies) || allergies.length > 50 || !(medications.length + allergies.length)) throw new AppError('Provide a medication or allergy list.');
-    params = { medications: medications.map(m => ({name:string(m.name,'medication name',200),dosage:string(m.dosage,'dose label',200),frequency:string(m.frequency,'frequency',200),asNeeded: /as needed|\bprn\b/i.test(m.frequency),...(m.times===undefined?{}:{times:m.times})})), allergies:allergies.map(a => string(a,'allergy',200)) };
+    params = { medications: medications.map(m => ({name:string(m.name,'medication name',200),dosage:string(m.dosage,'dose label',200),frequency:string(m.frequency,'frequency',200),asNeeded: m.asNeeded===true||/as needed|\bprn\b/i.test(m.frequency),...(m.times===undefined?{}:{times:m.times})})), allergies:allergies.map(a => string(a,'allergy',200)) };
     for(const med of params.medications)if(med.times!==undefined){if(!Array.isArray(med.times)||med.times.length>12||med.times.some(t=>typeof t!=='string'||!/^([01]\d|2[0-3]):[0-5]\d$/.test(t)))throw new AppError('Provide valid daily medication times.');med.times=med.asNeeded?[]:[...new Set(med.times)].sort();}
     if(new Set(params.medications.map(m=>medicationKey(m.name))).size !== params.medications.length)throw new AppError('The list includes the same medication more than once. Please resolve the duplicate first.');
     title = 'Save medication and allergy list'; details = [...params.medications.map(m=>`${m.name}: ${m.dosage}, ${m.frequency}${m.times===undefined?'':m.asNeeded?' (as needed, no routine reminders)':` at ${m.times.join(', ')} (${state.settings.timezone})`}`), ...params.allergies.map(a=>`Allergy: ${a}`),'Save to your profile. Explicit daily times schedule reminders; device permission is required for notifications. Stock counts are not changed. Medications absent from this list remain unchanged.'];
@@ -80,8 +80,8 @@ export function proposal(state, kind, params) {
     params = { quantity: number(params.quantity ?? 1, 'tablets taken', 0.25, 20), name: 'Example medication' };
     title = 'Record example medication'; details = [`${params.quantity} tablet(s) of Example medication`, 'Record as taken now', `Deduct ${params.quantity} tablet(s) from supplies`, 'Preview medication only; this is not a prescribed regimen'];
   } else if (kind === 'bag') {
-    params = { volume: number(params.volume, 'volume in mL', 0, 3000), photoId: params.photoId || null };
-    title = 'Save bag reading'; details = [`${params.volume} mL currently in bag`, 'Visual estimate checked by you', 'No catheter deducted; this is not cumulative urine output'];
+    params = { volume: number(params.volume, 'volume in mL', 0, 3000), photoId: params.photoId || null,time:params.time||now() };if(!Number.isFinite(Date.parse(params.time)))throw new AppError('Please provide a valid time.');
+    title = 'Save bag reading'; details = [`${params.volume} mL currently in bag`, `Time: ${new Intl.DateTimeFormat('en-US',{timeZone:state.settings.timezone||'UTC',dateStyle:'medium',timeStyle:'short'}).format(new Date(params.time))} (${state.settings.timezone||'UTC'})`, 'Visual estimate checked by you', 'No catheter deducted; this is not cumulative urine output'];
   } else if (kind === 'vitals') {
     params = { systolic: params.systolic == null ? null : number(params.systolic, 'systolic pressure', 30, 300), diastolic: params.diastolic == null ? null : number(params.diastolic, 'diastolic pressure', 20, 250), heartRate: params.heartRate == null ? null : number(params.heartRate, 'heart rate', 20, 250), ...(params.photoId ? {photoId:String(params.photoId)} : {}) };
     if ((params.systolic == null) !== (params.diastolic == null)) throw new AppError('Please provide both blood pressure numbers.');
@@ -114,7 +114,7 @@ export function proposal(state, kind, params) {
   state.proposals.push(p); state.draft = null;
   return message('assistant', 'Please review this before I save it.', { proposal: publicProposal(p), options: [] });
 }
-export function publicProposal(p) { const { params, ...publicFields } = p; return { ...publicFields, ...(p.kind === 'settings' ? { changedSettings: Object.keys(params) } : {}) }; }
+export function publicProposal(p) { const { params, ...publicFields } = p; return { ...publicFields, ...(['bag','catheterization'].includes(p.kind)&&p.params.photoId?{editablePhotoCare:true}:{}), ...(p.kind === 'settings' ? { changedSettings: Object.keys(params) } : {}) }; }
 export function finishProposal(state, id, decision) {
   const p = state.proposals.find(p => p.id === id);
   if (!p) throw new AppError('This action was not found.', 404);
@@ -176,6 +176,6 @@ export function undoEvent(state, id) {
   return message('assistant', 'Undone. I kept the original entry and correction in your history, and restored any supplies used.');
 }
 export function view(state) {
-  const { draft, proposals, ...visible } = state;
+  const { draft, proposals, careObservation, ...visible } = state;
   return visible;
 }

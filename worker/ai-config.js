@@ -41,13 +41,13 @@ export async function openAIResponse(env,config,payload,fetcher=fetch){
  const calls=(result.output||[]).filter(item=>item.type==='function_call');
  const text=(result.output||[]).filter(item=>item.type==='message').flatMap(item=>item.content||[]).filter(item=>item.type==='output_text').map(item=>item.text).join('\n');
  if(!calls.length&&!text)throw new AppError('The AI returned no usable response. Please retry.',503);
- return {response:text,tool_calls:calls.map(c=>({name:c.name,arguments:c.arguments}))};
+ return {response:text,tool_calls:calls.map(c=>({id:c.call_id,name:c.name,arguments:c.arguments}))};
 }
 export async function chatResponse(env,payload){
  const {settings}=await aiConfiguration(env);
  if(settings.provider==='cloudflare')return env.AI.run('@cf/meta/llama-3.3-70b-instruct-fp8-fast',payload);
  if(settings.apiFormat==='chat_completions')return completionResponse(env,settings,payload,settings.chatModel,settings.chatReasoning);
- return openAIResponse(env,settings,{model:settings.chatModel,input:payload.messages,tools:payload.tools.map(t=>({type:'function',...t,strict:false})),parallel_tool_calls:false,...(settings.chatReasoning==='omit'?{}:{reasoning:{effort:settings.chatReasoning}}),max_output_tokens:settings.maxOutputTokens});
+ return openAIResponse(env,settings,{model:settings.chatModel,input:responsesInput(payload.messages),tools:payload.tools.map(t=>({type:'function',...t,strict:false})),parallel_tool_calls:false,...(settings.chatReasoning==='omit'?{}:{reasoning:{effort:settings.chatReasoning}}),max_output_tokens:settings.maxOutputTokens});
 }
 export async function photoResponse(env,payload){
  const {settings}=await aiConfiguration(env);
@@ -62,3 +62,5 @@ async function completionResponse(env,config,payload,model,effort){
  const choice=data.choices?.[0];if(!choice||!['stop','tool_calls'].includes(choice.finish_reason))throw new AppError('The AI response was incomplete. No action was taken.',503);
  return {response:choice.message?.content||'',tool_calls:choice.message?.tool_calls||[]};
 }
+
+function responsesInput(messages){return messages.flatMap(m=>m.role==='tool'?[{type:'function_call_output',call_id:m.tool_call_id,output:m.content}]:m.tool_calls?[...(m.content?[{role:'assistant',content:m.content}]:[]),...m.tool_calls.map(c=>({type:'function_call',call_id:c.id,name:c.function.name,arguments:c.function.arguments}))]:[m]);}

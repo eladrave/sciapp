@@ -15,3 +15,5 @@ The existing backend validates tool intent, parses original medication schedules
 Deployment requires additive migration `0009_ai_configuration.sql`. Without a saved configuration, OpenAI is selected only when an API key is installed; otherwise legacy Cloudflare remains active. To explicitly keep legacy mode after adding a secret, save Cloudflare in the admin settings before installing the key. Public `/api/health` reports the effective provider and models, never secrets.
 
 Anthropic uses base URL https://api.anthropic.com/v1 with Chat Completions format. Requests to that exact host include its required anthropic-version header (2023-06-01). Use provider-default reasoning. Model and credential ownership are configured separately; the original OpenAI Worker secret is retained for rollback.
+
+Care interpretation, contextual photo reviews, corrections and time resolution are owned by docs/care-agent.md. The active model uses typed tools rather than original-message command parsing; legacy parsers remain only for limited offline controls and older compatibility paths.

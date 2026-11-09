@@ -98,7 +98,7 @@ function proposalCard(proposal) {
  card.append(node('span','proposal-label',proposal.status === 'pending' ? 'FOR YOUR REVIEW' : 'REVIEWED CHANGE'),node('h3','',proposal.title || 'Review this change'));
  const details = node('ul'); (proposal.details || []).forEach(item => details.append(node('li','',item))); card.append(details);
  if (expired) { card.append(node('p','proposal-status','Expired. Please request a new review.'),button('Ask again','secondary',() => send(`Please create a fresh review for: ${proposal.title}. ${proposal.details.join('. ')}`))); }
- else if (proposal.status === 'pending') { const actions = node('div','proposal-buttons'); for (const [label,decision,css] of [['Approve','approve','primary'],['No, cancel','cancel','secondary']]) { const el = button(label,css,() => act(proposal.id,decision)); el.dataset.action = proposal.id; el.disabled = busy; actions.append(el); } card.append(actions); }
+ else if (proposal.status === 'pending') { const actions = node('div','proposal-buttons'); for (const [label,decision,css] of [['Approve','approve','primary'],['No, cancel','cancel','secondary']]) { const el = button(label,css,() => act(proposal.id,decision)); el.dataset.action = proposal.id; el.disabled = busy; actions.append(el); } if(proposal.editablePhotoCare){actions.append(button('Change time','secondary',()=>send('Change time')),button('Change amount','secondary',()=>send('Change amount')));} card.append(actions); }
  else card.append(node('p','proposal-status',proposal.status === 'approved' ? '✓ Approved' : 'Cancelled'));
  return card;
 }

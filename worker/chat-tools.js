@@ -1,3 +1,4 @@
+import { editPhotoReview } from './photo-review.js';
 import { healthTool } from './health-systems.js';
 import { message, finishProposal } from './domain.js';
 import { assistantAction } from './assistant-actions.js';
@@ -9,6 +10,9 @@ const names=new Map([['set_catheter_schedule','catheterSchedule'],['record_cathe
 const clarify=()=>message('assistant','I have not changed your care records. Is this a daily reminder schedule, or are you reporting care you completed?',{toolError:'The selected tool does not match a supported explicit operation in the latest message.',options:['Set catheter reminders','Log catheterization']});
 export async function executeCareTool(env,id,state,text,tool,photoData=null,photoId=null){
  if(!tool||typeof tool.name!=='string'||!tool.arguments||typeof tool.arguments!=='object'||Array.isArray(tool.arguments))return clarify();
+ if(photoData?.type==='bag')return handleKnown(state,text,photoData,photoId);
+ const photoEdit=editPhotoReview(state,text);if(photoEdit)return photoEdit;
+ if(state.draft?.kind==='bag'&&/\b\d+(?:\.\d+)?\s*ml\b/i.test(text))return handleKnown(state,text);
  // A second model must not rewrite visual measurements or drop their source.
  if(tool.name==='record_vitals'&&photoData&&photoId)return handleKnown(state,text,photoData,photoId);
  if(['search_health_systems','connect_health_system','list_health_connections','sync_health_records','list_imported_health_records','review_imported_health_record','prepare_imported_medication','set_health_auto_sync','disconnect_health_system','delete_imported_health_records','confirm_health_connection_action'].includes(tool.name))return env.HEALTH_TOKEN_KEY?await healthTool(env,id,state,text,tool):message('assistant','Health system connections are not configured yet.');
