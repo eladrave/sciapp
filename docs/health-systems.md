@@ -2,11 +2,11 @@
 
 ## Release and boundaries
 
-SCIapp 0.8.0 adds multiple read-only SMART on FHIR R4 connections. The live application must not describe a hospital as connected until its OAuth callback has succeeded. Directory inclusion, application registration, patient authorization and record sync are distinct states.
+SCIapp 0.8.1 adds multiple read-only SMART on FHIR R4 connections. The live application must not describe a hospital as connected until its OAuth callback has succeeded. Directory inclusion, application registration, patient authorization and record sync are distinct states.
 
 Jackson Health System (Miami) is listed in Oracle's official patient directory under Public Health Trust of Miami-Dade County. Its listed patient endpoint is seeded, without substituting a provider endpoint. The listed hostname did not resolve from the remote browser test environment on 2026-11-08. Recheck operational availability and confirm with Jackson/Oracle if it remains unavailable. No real Jackson record retrieval has been validated.
 
-Epic's official public Brands bundle is downloaded into D1, normally weekly. Failed downloads retry no more than hourly. Searches use the local catalog, not runtime directory queries. Jackson and the Epic synthetic-patient sandbox are always seeded. Each organization retains a distinct issuer and connection; the same patient ID in two systems is not a shared identity.
+Epic's official public Brands bundle is attempted with a bounded 4 MB read, normally weekly. If it is too large or unavailable, the smaller official R4 Endpoint Bundle is used. The latter remains published for compatibility but is deprecated by Epic; the supported provider list may therefore be narrower than Brands. No unbounded 97 MB JSON download is buffered in a Worker. Failed downloads retry no more than hourly. Searches use the local catalog, not runtime directory queries. Jackson and the Epic synthetic-patient sandbox are always seeded. Each organization retains a distinct issuer and connection; the same patient ID in two systems is not a shared identity.
 
 ## Developer registration
 
@@ -92,7 +92,7 @@ Existing administrator auth, exact-origin and CSRF controls protect:
 
 ## Validation
 
-71 automated tests pass, including the existing care/reminder checks and new workerd/D1 integration tests. Health tests use synthetic accounts, a fake hospital and mocked FHIR/OAuth responses. Coverage includes PKCE, callback browser binding/replay, encryption context, multiple systems/account isolation, import idempotence, review-only medications, wrong-patient data, unsafe pagination, disconnect races, queued jobs/expired auth, directory caching and administrator CSRF. The live Llama model selected search_health_systems for a natural Jackson connection request. Epic sandbox SMART metadata was reachable and advertised S256 support. Real patient authorization, real hospital retrieval and long-lived vendor refresh behavior remain unvalidated pending registration and consent.
+72 automated tests pass, including the existing care/reminder checks and new workerd/D1 integration tests. Health tests use synthetic accounts, a fake hospital and mocked FHIR/OAuth responses. Coverage includes PKCE, callback browser binding/replay, encryption context, multiple systems/account isolation, import idempotence, review-only medications, wrong-patient data, unsafe pagination, disconnect races, queued jobs/expired auth, directory caching and administrator CSRF. The live Llama model selected search_health_systems for a natural Jackson connection request. Epic sandbox SMART metadata was reachable and advertised S256 support. Real patient authorization, real hospital retrieval and long-lived vendor refresh behavior remain unvalidated pending registration and consent.
 
 ## Official references
 

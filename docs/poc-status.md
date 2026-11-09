@@ -1,4 +1,4 @@
-# Current status: personal care beta 0.8.0
+# Current status: personal care beta 0.8.1
 
 The primary domain is https://sciapp.eladrave.com, with the workers.dev origin retained for transition. Domain configuration and future migration steps are documented in domain-migration.md.
 
@@ -114,3 +114,7 @@ Validation: 63 automated tests, syntax checks and build passed. Remote browser v
 The app now implements multiple read-only SMART on FHIR connections with patient authorization, encrypted credentials, a locally cached official Epic organization directory, Jackson/Oracle provider configuration, isolated source records, queued manual imports, optional reviewed background sync, review-only medication adoption, disconnect and deletion controls. Eleven model tools cover discovery, connection/status, sync, source review and changes. Administrator Settings accepts vendor-issued registration credentials. See health-systems.md for authoritative procedures, limits and tests.
 
 Vendor registrations are not yet configured, so no real patient connection or hospital-data import is claimed. Jackson’s published Oracle patient endpoint did not resolve in the remote browser check. Real Epic sandbox discovery and a live Llama native-tool selection succeeded. 71 automated tests pass with synthetic OAuth/FHIR integration coverage; existing care data and notification configuration remain separate.
+
+## Endpoint directory fallback, 0.8.1
+
+Live validation found the official Brands directory is approximately 97 MB. Directory ingestion now uses a bounded read and falls back to Epic’s smaller officially published R4 Endpoint Bundle, parsing either format and caching verified endpoints locally. This avoids buffering an unbounded directory in the Worker. Both versions are pushed to GitHub. A regression checks the large-response fallback. 72 automated tests pass. The v0.8.0 live mobile check passed Jackson natural-language search, the correct registration gate, separate synthetic connection cards and Settings controls with no horizontal overflow. No real patient data was imported.

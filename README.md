@@ -4,7 +4,7 @@ Accessible conversational care companion for people with spinal cord injuries.
 
 ## Status
 
-Personal care beta at **https://sciapp.eladrave.com** (0.8.0).
+Personal care beta at **https://sciapp.eladrave.com** (0.8.1).
 
 Clerk identities own isolated records in Cloudflare D1. Signed-in accounts have their own medications, allergies, inventory, settings, and confirmed care journal. The separate seven-day sample preview remains available. Production Clerk and Google sign-in are active. This remains a personal-care beta, not a completed production healthcare qualification.
 

@@ -67,3 +67,8 @@ test('official Epic directory ingestion supports brands, caches locally and reje
 test('model receives health tools, grounded connection context and imported records as untrusted evidence',async()=>{
  let captured;const s=initialState({real:true});s.messages.push({role:'assistant',content:'Choose a system',healthSystems:[{id:'jackson-miami',name:'Jackson'}]});const reply=await interpret({AI:{run:async(_,payload)=>{captured=payload;return {tool_calls:[{name:'connect_health_system',arguments:{providerId:'jackson-miami'}}]};}}},s,'Connect Jackson',{health:{available:true,connections:[]}});assert.equal(reply.tool.name,'connect_health_system');for(const name of ['sync_health_records','disconnect_health_system','confirm_health_connection_action','list_imported_health_records'])assert.ok(captured.tools.some(t=>t.name===name));assert.match(captured.messages[0].content,/HEALTH CONNECTION CONTEXT/);assert.ok(captured.messages.some(m=>m.content.includes('jackson-miami')));
 });
+
+test('large Brands downloads fall back to the official compact endpoint bundle',async()=>setup(async({env})=>{
+ const urls=[];const count=await refreshDirectory(env,async url=>{urls.push(url);return url.endsWith('/Brands')?new Response('too large',{headers:{'content-length':'97000000'}}):Response.json({entry:[{resource:{resourceType:'Endpoint',id:'compact',status:'active',name:'Compact Hospital',address:'https://compact.example.org/api/FHIR/R4/'}}]});},true);
+ assert.equal(count,1);assert.equal(urls.length,2);assert.ok(urls[1].endsWith('/R4'));assert.equal((await catalog(env,'Compact'))[0].name,'Compact Hospital');
+}));

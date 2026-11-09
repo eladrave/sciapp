@@ -21,7 +21,7 @@ test('administrator auth, CSRF, resource review workflow, archive retrieval, set
  assert.equal((await req('/api/admin/health-clients/epic','PUT',{clientId:'synthetic-client',authMethod:'none'},{'X-Admin-CSRF':''})).status,403);
  assert.equal((await req('/api/admin/health-clients/epic','PUT',{clientId:'synthetic-client',authMethod:'none'})).status,200);
  const registration=await(await req('/api/admin/health-clients')).json();assert.equal(registration.clients[0].client_id,'synthetic-client');assert.equal(JSON.stringify(registration).includes('secret_cipher'),false);
- const overview=await(await req('/api/admin/overview')).json();assert.equal(overview.memoryPolicy,'Always on for every signed-in user');assert.equal(overview.appVersion,'0.8.0');
+ const overview=await(await req('/api/admin/overview')).json();assert.equal(overview.memoryPolicy,'Always on for every signed-in user');assert.equal(overview.appVersion,'0.8.1');
  assert.equal((await req('/api/admin/settings','PUT',{version:0,settings:{retrievalThreshold:0.7,resourceReviewDays:90}},{'X-Admin-CSRF':''})).status,403);
  assert.equal((await req('/api/admin/settings','PUT',{version:0,settings:{retrievalThreshold:0.7,resourceReviewDays:90}})).status,200);
  assert.equal((await req('/api/admin/settings','PUT',{version:0,settings:{retrievalThreshold:0.7,resourceReviewDays:90}})).status,409);
