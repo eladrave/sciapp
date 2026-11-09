@@ -26,3 +26,5 @@
 .photo-options{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:12px;border:1px solid #d8dfd3;border-radius:16px;background:#f5f7f1;margin-bottom:8px}.photo-options[hidden]{display:none}.photo-options span{flex-basis:100%;font-size:13px;line-height:1.5;color:#586b50}
 
 .health-card{overflow-wrap:anywhere}.health-card button{margin:5px 5px 0 0}.health-card h3{font-size:1.05rem}
+
+.profile-name{font-size:1.15rem;font-weight:600}.profile-section{padding-top:16px;margin-top:16px;border-top:1px solid #dce2d8}.profile-section h3{font-size:1.05rem}.profile-medication{padding:12px 0;border-bottom:1px solid #edf0e9}.profile-medication h4{margin:0;font-size:1rem}.profile-schedule{color:#245b4b;font-weight:600;overflow-wrap:anywhere}.profile-medication p{margin:6px 0}

@@ -163,6 +163,30 @@ function appendMedicationCards(panel) {
  else allergies.append(node('p','','No allergy information entered. This does not mean no known allergies.'));
  allergies.append(chatButton('Add allergies','Add allergies')); panel.append(allergies);
 }
+function dailyClock(value) {
+ const match=String(value).match(/^([01]\d|2[0-3]):([0-5]\d)$/);
+ if(!match)return String(value);
+ const hour=Number(match[1]);return `${hour%12||12}:${match[2]} ${hour>=12?'PM':'AM'}`;
+}
+function appendProfile(panel) {
+ const profile=node('section','data-card profile-card');profile.setAttribute('aria-label','Your profile');
+ profile.append(node('h2','','Profile'),node('p','profile-name',state.profile?.name||'You'),node('p','',`Timezone: ${state.settings.timezone||'Not set'}`));
+ const catheter=node('section','profile-section');catheter.append(node('h3','','Catheterization schedule'));
+ const daily=state.settings.catheterScheduleMode==='daily'&&state.settings.catheterTimes?.length;
+ catheter.append(node('p','profile-schedule',daily?'Every day: '+state.settings.catheterTimes.map(dailyClock).join(' · '):state.settings.catheterStartAt||state.settings.catheterRemindersEnabled?'Every '+state.settings.catheterIntervalHours+' hours (interval schedule)':'Schedule not set.'));
+ catheter.append(node('p','',state.settings.catheterRemindersEnabled?'Catheter reminders on. Device notification permission is separate.':'Catheter reminders off.'));
+ catheter.append(chatButton('Change catheter schedule','Set catheter reminders'));profile.append(catheter);
+ const medications=node('section','profile-section');medications.append(node('h3','','Medications and schedules'));
+ if(!careMedications().length)medications.append(node('p','','No medications saved.'));
+ for(const med of careMedications()){
+ const row=node('article','profile-medication');row.append(node('h4','',med.name),node('p','',[med.dosage,med.frequency].filter(Boolean).join(' · ')),node('p','profile-schedule',med.asNeeded?'As needed. No routine reminder schedule.':med.times?.length?'Every day: '+med.times.map(dailyClock).join(' · '):'Reminder times not set.'));
+ if(!med.asNeeded)row.append(chatButton(med.times?.length?'Change reminder times':'Set reminder times',`Set reminders for ${med.name}`));medications.append(row);
+ }
+ medications.append(chatButton('Update medication list','Add medication'));profile.append(medications);
+ const allergies=node('section','profile-section');allergies.append(node('h3','','Allergies'));
+ if(state.allergies?.length){const list=node('ul','care-list');for(const a of state.allergies)list.append(node('li','',typeof a==='string'?a:a.name));allergies.append(list);}else allergies.append(node('p','','No allergy information entered.'));
+ allergies.append(chatButton('Update allergies','Add allergies'));profile.append(allergies,chatButton('Change timezone','Change my timezone'));panel.append(profile);
+}
 function appendReminders(panel) {
  const card = node('section','data-card'); card.append(node('h2','','Upcoming reminders'));
  card.append(node('p','',`Timezone: ${state.settings.timezone || 'Not set'}`));
@@ -197,8 +221,9 @@ function renderPanel() {
   panel.append(chatButton('Log an activity','Log catheterization'));
  }
  if (activePage === 'Settings') {
+  panel.append(panelHeader('Your profile and preferences.','Your daily routine at a glance. You can change it here or through the conversation.'));
+  appendProfile(panel);
   healthUI.settings(panel,config?.features?.healthSystems&&state.mode==='personal');
-  panel.append(panelHeader('Make this space yours.','You can change your preferences here, or just ask in the conversation.'));
   const notifications = node('section','data-card'); notifications.append(node('h2','','Device notifications'));
   notifications.append(node('p','',pushStatus.enabled ? (state.settings.notificationsEnabled===false ? 'This device is connected, but scheduled notifications are turned off for your account. Enable again to resume them.' : 'Enabled on this browser. Lock-screen messages contain no medication names or health details.') : pushStatus.permission === 'denied' ? 'Chrome or Android is blocking this device. Your schedule is saved, but this device cannot receive reminders until permission is allowed.' : 'Off on this device. Enable to receive reminders even when this page is closed.'));
   if (pushServerStatus?.lastAcceptedAt) notifications.append(node('p','',`Last accepted by push service: ${formatTime(pushServerStatus.lastAcceptedAt)}`));
@@ -214,7 +239,7 @@ function renderPanel() {
   notifyActions.append(enable);
   if (pushStatus.enabled) { const test = button('Send test notification','secondary',()=>notificationAction('test')); const off = button('Disable notifications on this device','secondary',()=>notificationAction('disable')); test.disabled = off.disabled = notificationBusy; notifyActions.append(test,off); }
   if (!window.Clerk?.session) notifications.append(node('p','','Sign in to enable notifications for your personal account.'));
-  notifications.append(notifyActions); panel.append(notifications); appendReminders(panel);
+  notifications.append(notifyActions); panel.append(notifications);
   const sound = node('section','data-card setting-row'); const text = node('div'); text.append(node('h2','','Spoken replies'),node('p','',muted ? 'Off. Replies stay on screen.' : 'On. New replies are read aloud.')); sound.append(text,button(muted ? 'Turn on' : 'Mute','secondary',() => {setMute(!muted); renderPanel();})); panel.append(sound);
   const hands = node('section','data-card'); hands.append(node('h2','','Foreground hands-free'),node('p','',state.settings?.handsFree ? 'Enabled while this page is open. Your microphone status is shown below. Speech is sent after your chosen pause.' : 'Optional browser voice conversation while this page is open. No background listening.'),chatButton(state.settings?.handsFree ? 'Turn hands-free off' : 'Turn hands-free on',state.settings?.handsFree ? 'Turn hands-free off' : 'Turn hands-free on')); if(state.settings?.handsFree) hands.append(button(handsFreePaused ? 'Resume listening' : 'Pause listening','secondary',() => {toggleHandsFreePause();})); panel.append(hands);
   const access = node('section','data-card'); access.append(node('h2','','Comfort and access'),node('p','','Change text size, quiet hours, and other preferences through the conversation.'),chatButton('Set my preferences','Settings')); panel.append(access);

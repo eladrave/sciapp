@@ -1,4 +1,4 @@
-# Current status: personal care beta 0.8.1
+# Current status: personal care beta 0.8.2
 
 The primary domain is https://sciapp.eladrave.com, with the workers.dev origin retained for transition. Domain configuration and future migration steps are documented in domain-migration.md.
 
@@ -118,3 +118,11 @@ Vendor registrations are not yet configured, so no real patient connection or ho
 ## Endpoint directory fallback, 0.8.1
 
 Live validation found the official Brands directory is approximately 97 MB. Directory ingestion now uses a bounded read and falls back to Epic’s smaller officially published R4 Endpoint Bundle, parsing either format and caching verified endpoints locally. This avoids buffering an unbounded directory in the Worker. Both versions are pushed to GitHub. A regression checks the large-response fallback. 72 automated tests pass. The v0.8.0 live mobile check passed Jackson natural-language search, the correct registration gate, separate synthetic connection cards and Settings controls with no horizontal overflow. No real patient data was imported.
+
+The directory also includes a verified official R4 bootstrap snapshot (477 active endpoint entries) in the deployed code. Search seeds this public metadata once, allowing production discovery when external directory downloads fail from Worker egress. No patient data or client credentials are present in the snapshot.
+
+## Verified directory bootstrap, 0.8.2
+
+Production search can seed the versioned public endpoint snapshot independently of live downloads. This version is pushed separately to GitHub, alongside v0.8.0 and v0.8.1.
+
+Settings now starts with a Profile summary: saved name/timezone, daily catheter clock times without occurrence dates, medication dose/frequency and explicit daily reminder times, as-needed status and allergies. Unknown medication reminder times remain visibly unset. Settings no longer repeats the dated upcoming-task list; Today retains dated task occurrences. Imported source medications remain separate until explicitly approved into the care plan.

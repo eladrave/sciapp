@@ -1,3 +1,4 @@
+import bootstrap from '../data/epic-directory.json' with {type:'json'};
 import { AppError } from './domain.js';
 export const DIRECTORY='https://open.epic.com/Endpoints/Brands';
 export const COMPACT_DIRECTORY='https://open.epic.com/Endpoints/R4';
@@ -17,7 +18,14 @@ export async function readJSON(response,max=2000000){
  const reader=response.body?.getReader();if(!reader)throw new AppError('Empty health system response.',502);let size=0,text='';const decoder=new TextDecoder();
  try{while(true){const {value,done}=await reader.read();if(done)break;size+=value.length;if(size>max)throw new AppError('The health system response exceeds the import limit.',502);text+=decoder.decode(value,{stream:true});}text+=decoder.decode();return JSON.parse(text);}catch(e){await reader.cancel().catch(()=>{});if(e instanceof AppError)throw e;throw new AppError('Invalid health system response.',502);}
 }
-export async function seedProviders(env){for(const p of defaults)await env.DB.prepare('INSERT OR IGNORE INTO health_providers VALUES(?,?,?,?,?,?)').bind(p.id,p.name,p.vendor,p.issuer,p.source_url,Date.now()).run();}
+export async function seedProviders(env){
+ for(const p of defaults)await env.DB.prepare('INSERT OR IGNORE INTO health_providers VALUES(?,?,?,?,?,?)').bind(p.id,p.name,p.vendor,p.issuer,p.source_url,Date.now()).run();
+ const marker='epic-bootstrap-'+bootstrap.retrieved;
+ if(await env.DB.prepare('SELECT id FROM health_meta WHERE id=?').bind(marker).first())return;
+ const rows=[];for(const p of bootstrap.entries){let u;try{u=publicURL(p.issuer);}catch{continue;}if(u.search||!/\/R4\/?$/i.test(u.pathname))continue;const issuer=u.href.replace(/\/$/,'');const id='epic-'+Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(issuer)))).slice(0,10).map(b=>b.toString(16).padStart(2,'0')).join('');rows.push({id,name:p.name,issuer});}
+ for(let n=0;n<rows.length;n+=50)await env.DB.batch(rows.slice(n,n+50).map(p=>env.DB.prepare('INSERT OR IGNORE INTO health_providers VALUES(?,?,?,?,?,?)').bind(p.id,p.name,'epic',p.issuer,bootstrap.source,Date.now())));
+ await env.DB.prepare('INSERT OR IGNORE INTO health_meta VALUES(?,?,?)').bind(marker,bootstrap.source,Date.now()).run();
+}
 export async function provider(env,id){await seedProviders(env);const row=await env.DB.prepare('SELECT * FROM health_providers WHERE id=?').bind(String(id||'')).first();if(!row)throw new AppError('Choose a health system from the directory.',404);return row;}
 export async function catalog(env,query=''){
  await seedProviders(env);const q=String(query).trim().slice(0,160).replace(/[\%_]/g,'');
