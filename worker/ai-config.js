@@ -29,7 +29,7 @@ export async function prepareAISettings(env,input,key){
 }
 async function providerRequest(env,config,path,body,fetcher=fetch,keyOverride){
  const key=keyOverride||await providerKey(env,config);if(!key)throw new AppError('Set an API key for this provider.',503);
- let response;try{response=await fetcher(providerURL(config.baseUrl||aiDefaults.baseUrl)+path,{method:body?'POST':'GET',headers:{Authorization:`Bearer ${key}`,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(45000),redirect:'error'});}catch{throw new AppError('The AI provider did not respond. Please retry.',503);}
+ let response;try{response=await fetcher(providerURL(config.baseUrl||aiDefaults.baseUrl)+path,{method:body?'POST':'GET',headers:{Authorization:`Bearer ${key}`,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(45000),redirect:'manual'});}catch{throw new AppError('The AI provider did not respond. Please retry.',503);}
  if(!response.ok){await response.body?.cancel();throw new AppError(`AI provider request failed (HTTP ${response.status}). Check the URL, key and model configuration.`,503);}
  return readJSON(response,2000000);
 }
