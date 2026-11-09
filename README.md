@@ -105,3 +105,5 @@ Version 0.9.0 replaces the active care command parser with typed proposals and a
 Version 0.9.1 adds selectable clarification answers with free-form typing/speech, stale-question protection, medication photo strength/form matching, and reviewable care corrections. Earlier approved entries are not automatically rewritten.
 
 Version 0.9.2 restores follow-up and clarification button availability after requests finish, including hands-free mode. Stale question answers remain disabled.
+
+Version 0.10.0 adds a searchable care journal with original images, local-date history, three-image comparison, user observations, and printable doctor reports. Server-computed local agendas and accessible medication check-ins separate upcoming care from unconfirmed earlier items. Push registration repair and Worker delivery were verified with a real isolated browser account. See [journal and reminders](docs/journal-and-reminders.md) for behavior, validation, and storage boundaries.

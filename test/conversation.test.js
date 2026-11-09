@@ -64,7 +64,7 @@ test('both photo tools preserve extracted evidence and original source until app
   const evidence={type:'monitor',systolic:123,diastolic:81,heartRate:null};
   const reply=await executeCareTool({},'clerk:test',s,'Read this monitor',{name,arguments:{systolic:200,diastolic:100,heartRate:80}},evidence,'test-photo');
   assert.equal(reply.proposal.kind,'vitals');assert.equal(s.events.length,0);
-  assert.deepEqual(s.proposals.at(-1).params,{systolic:123,diastolic:81,heartRate:null,photoId:'test-photo'});
+  const {time,...reading}=s.proposals.at(-1).params;assert.ok(Number.isFinite(Date.parse(time)));assert.deepEqual(reading,{systolic:123,diastolic:81,heartRate:null,photoId:'test-photo'});
   finishProposal(s,reply.proposal.id,'approve');assert.equal(s.events[0].data.photoId,'test-photo');assert.equal(s.events[0].data.systolic,123);
  }
 });

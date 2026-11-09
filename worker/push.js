@@ -22,11 +22,11 @@ export async function subscribe(env,accountId,value){
  return id;
 }
 export async function unsubscribe(env,accountId,endpoint){if(typeof endpoint!=='string'||endpoint.length>4096)throw new AppError('Invalid device.');await env.DB.prepare('DELETE FROM push_subscriptions WHERE id=? AND account_id=?').bind(await digest(endpoint),accountId).run();}
-export async function pushStatus(env,accountId){const r=await env.DB.prepare('SELECT COUNT(*) AS devices,MAX(last_accepted_at) AS lastAcceptedAt FROM push_subscriptions WHERE account_id=?').bind(accountId).first();const e=await env.DB.prepare('SELECT last_error FROM push_subscriptions WHERE account_id=? AND last_error IS NOT NULL LIMIT 1').bind(accountId).first();return {...r,lastError:e?.last_error||null};}
+export async function pushStatus(env,accountId,endpoint){const r=await env.DB.prepare('SELECT COUNT(*) AS devices,MAX(last_accepted_at) AS lastAcceptedAt FROM push_subscriptions WHERE account_id=?').bind(accountId).first();const e=await env.DB.prepare('SELECT last_error FROM push_subscriptions WHERE account_id=? AND last_error IS NOT NULL LIMIT 1').bind(accountId).first();const device=endpoint?await env.DB.prepare('SELECT id FROM push_subscriptions WHERE id=? AND account_id=?').bind(await digest(String(endpoint)),accountId).first():null;return {...r,lastError:e?.last_error||null,deviceRegistered:!!device};}
 export async function sendPush(env,row,tag,fetcher=fetch){
  const sub=validateSubscription(JSON.parse(row.subscription));
  const payload=await buildPushPayload({data:JSON.stringify({tag}),options:{ttl:120}},sub,{subject:'mailto:eladrave@gmail.com',publicKey:env.VAPID_PUBLIC_KEY,privateKey:env.VAPID_PRIVATE_KEY});
- const response=await fetcher(sub.endpoint,{...payload,redirect:'error',signal:AbortSignal.timeout(15000)});
+ const response=await fetcher(sub.endpoint,{...payload,redirect:'manual',signal:AbortSignal.timeout(15000)});
  if(response.status===404||response.status===410){await env.DB.prepare('DELETE FROM push_subscriptions WHERE id=? AND account_id=?').bind(row.id,row.account_id).run();return {expired:true};}
  if(!response.ok)throw new Error(`push_${response.status}`);
  await env.DB.prepare('UPDATE push_subscriptions SET last_accepted_at=?,last_error=NULL WHERE id=? AND account_id=?').bind(Date.now(),row.id,row.account_id).run();

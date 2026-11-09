@@ -27,6 +27,7 @@ test('Worker integration: private sessions, approval concurrency, persistence, u
   assert.equal((await req('/api/state','GET',null,b)).status,200);assert.equal((await(await req('/api/state','GET',null,b)).json()).events.length,0);
   const f=new FormData();f.append('photo',new Blob([Uint8Array.from([137,80,78,71,13,10,26,10])],{type:'image/png'}),'label.png');
   r=await req('/api/photos','POST',f,a);assert.equal(r.status,200);const photo=await r.json();
+  const journalA=await(await req('/api/journal','POST',{photosOnly:true},a)).json();assert.equal(journalA.entries[0].photoId,photo.id);assert.equal(journalA.entries[0].status,'unreviewed');assert.equal((await(await req('/api/journal','POST',{photosOnly:true},b)).json()).total,0);assert.equal((await req('/api/journal','POST',{limit:1000},a)).status,400);
   assert.equal((await req(photo.url,'GET',null,b)).status,404);assert.equal((await req(photo.url,'GET',null,a)).status,200);
   assert.equal((await req(photo.url,'DELETE',null,a)).status,200);assert.equal((await req(photo.url,'GET',null,a)).status,404);
  } finally {await mf.dispose();}

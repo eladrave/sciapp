@@ -1,3 +1,4 @@
+import {journalQuery} from './journal.js';
 import { questionChoices } from '../web/question-choices.js';
 import { runCareAgent } from './care-orchestrator.js';
 import { aiConfiguration } from './ai-config.js';
@@ -11,7 +12,7 @@ import { accountIdForSubject } from './identity.js';
 import { createClerkClient } from '@clerk/backend';
 import { initialState, AppError, message, proposal, finishProposal, undoEvent, view, now, uid } from './domain.js';
 import { migratePersonalState } from './domain.js';
-import { reminderTasks } from './reminders.js';
+import { reminderTasks,careAgenda } from './reminders.js';
 import { reminderChat, repairLegacyScheduleReview } from './reminder-chat.js';
 import { subscribe, unsubscribe, pushStatus, testPush, dispatchReminders } from './push.js';
 import { assistantAction } from './assistant-actions.js';
@@ -19,7 +20,7 @@ import { handleKnown, interpret, analyzePhoto, CHAT_MODEL, VISION_MODEL } from '
 import { configuredOrigins, contentSecurityPolicy, canonicalHome } from './origins.js';
 import { assets } from '../generated/assets.js';
 
-function publicState(state) { return { ...view(state), reminderTasks: reminderTasks(state) }; }
+function publicState(state) { return { ...view(state), reminderTasks: reminderTasks(state),agenda:careAgenda(state) }; }
 const security = { 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin', 'X-Frame-Options': 'DENY', 'Permissions-Policy': 'camera=(self), microphone=(self), geolocation=()', 'Cache-Control': 'no-store' };
 const json = (value, status = 200, extra = {}) => Response.json(value, { status, headers: { ...security, ...extra } });
 const hash = async text => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))].map(n => n.toString(16).padStart(2, '0')).join('');
@@ -86,7 +87,7 @@ export default {
       if (!configuredOrigins(env,url.origin).includes(url.origin))return json({error:'This hostname is not configured for SCIapp.'},421);
       const canonical=canonicalHome(request,env);
       if(canonical)return new Response(null,{status:302,headers:{...security,Location:canonical}});
-      if (path === '/api/health') {const {settings}=await aiConfiguration(env);return json({ status:'ok',version:'0.9.2',chatModel:settings.provider==='openai'?settings.chatModel:CHAT_MODEL,visionModel:settings.provider==='openai'?settings.visionModel:VISION_MODEL,provider:settings.provider,mode:'personal-beta' });}
+      if (path === '/api/health') {const {settings}=await aiConfiguration(env);return json({ status:'ok',version:'0.10.0',chatModel:settings.provider==='openai'?settings.chatModel:CHAT_MODEL,visionModel:settings.provider==='openai'?settings.visionModel:VISION_MODEL,provider:settings.provider,mode:'personal-beta' });}
       if (path === '/api/config' && request.method === 'GET') return json({ appOrigin:env.APP_ORIGIN||url.origin, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null, authEnvironment: env.CLERK_PUBLISHABLE_KEY?.startsWith('pk_live_') ? 'production' : 'development', pushPublicKey:env.VAPID_PUBLIC_KEY||null, mode: env.CLERK_PUBLISHABLE_KEY ? 'authenticated' : 'preview', features: { notifications: !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY), memory:retrievalReady(env), resources:retrievalReady(env), medications:true, photos: true, transcription: !!env.AI, speech: false, caregivers: 'drafts', healthSystems:!!env.HEALTH_TOKEN_KEY, healthConnect: false }, notice: 'Personal care beta. Medication and allergy records are user-entered. Notifications are reminders, not guaranteed clinical alarms. Caregiver invitations remain drafts.' });
       if (!path.startsWith('/api/')) {
         if (!['GET','HEAD'].includes(request.method)) return json({ error: 'Method not allowed.' },405);
@@ -107,18 +108,22 @@ export default {
         await env.DB.prepare('INSERT INTO sessions(token_hash,account_id,expires_at) VALUES (?,?,?)').bind(await hash(token),id,Date.now()+7*86400000).run();
         return json({ state: publicState((await load(env,id)).state) },200,{ 'Set-Cookie': `__Host-sciapp=${token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=604800` });
       }
-      if(path.startsWith('/api/admin/'))return await adminRoute(request,env,ctx,{json,bodyJSON:r=>bodyJSON(r,600000),form,version:'0.9.2'});
+      if(path.startsWith('/api/admin/'))return await adminRoute(request,env,ctx,{json,bodyJSON:r=>bodyJSON(r,600000),form,version:'0.10.0'});
       if(path==='/api/health-systems/callback'&&request.method==='GET'){
         if(!env.HEALTH_TOKEN_KEY)throw new AppError('Health connections are not configured.',503);
         const result=await completeConnection(env,request);return new Response(null,{status:303,headers:{...security,Location:env.APP_ORIGIN+'/?health='+(result.cancelled?'cancelled':'connected'),'Set-Cookie':result.cookie}});
       }
       const id = await user(request, env);
       if(path.startsWith('/api/health-systems/')){if(!env.HEALTH_TOKEN_KEY)throw new AppError('Health connections are not configured.',503);await limit(request,env,'health-systems',300);return await healthRoute(request,env,id,{json,bodyJSON,ctx});}
+      if(path==='/api/reminders/review'&&request.method==='POST'){const data=await bodyJSON(request);if(!['scheduled','now'].includes(data.timing))throw new AppError('Choose when you took the dose.');return json(await mutate(env,id,state=>{const task=reminderTasks(state).find(t=>t.id===data.occurrenceId&&t.kind==='medication'&&Date.parse(t.dueAt)<=Date.now());if(!task)throw new AppError('This dose is no longer awaiting a record. Refresh your tasks.',409);return proposal(state,'medication',{medicationId:task.medicationId,scheduledFor:task.dueAt,time:data.timing==='scheduled'?task.dueAt:now()});}));}
+      if(path==='/api/reminders/snooze'&&request.method==='POST'){const data=await bodyJSON(request);return json(await mutate(env,id,state=>{const task=reminderTasks(state).find(t=>t.id===data.occurrenceId&&Date.parse(t.dueAt)<=Date.now());if(!task)throw new AppError('This reminder is no longer due.',409);state.reminderSnoozes=Object.fromEntries(Object.entries(state.reminderSnoozes||{}).filter(([,v])=>Date.parse(v)>Date.now()));state.reminderSnoozes[task.id]=new Date(Date.now()+1800000).toISOString();return message('assistant','I will show this check-in again in 30 minutes while the app is open, or when you next return. No dose was recorded.');}));}
+      if(path==='/api/journal'&&request.method==='POST')return json(journalQuery((await load(env,id)).state,await bodyJSON(request)));
       if (path === '/api/state' && request.method === 'GET') return json(publicState((await load(env,id)).state));
       if (path === '/api/session' && request.method === 'DELETE') { const token=(request.headers.get('cookie')||'').match(/(?:^|;\s*)__Host-sciapp=([^;]+)/)?.[1]; if(token)await env.DB.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await hash(token)).run(); return json({ok:true},200,{'Set-Cookie':'__Host-sciapp=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0'}); }
       if (path.startsWith('/api/push/')) {
         if(!id.startsWith('clerk:'))throw new AppError('Sign in to enable personal notifications.',403);
         if(path==='/api/push/status'&&request.method==='GET')return json({...(await pushStatus(env,id)),enabled:(await load(env,id)).state.settings.notificationsEnabled===true});
+        if(path==='/api/push/status'&&request.method==='POST'){const data=await bodyJSON(request);return json(await pushStatus(env,id,data.endpoint));}
         if(!env.VAPID_PRIVATE_KEY||!env.VAPID_PUBLIC_KEY)throw new AppError('Notifications are not configured on the server.',503);
         if(path==='/api/push/subscriptions'&&request.method==='POST'){
           await limit(request,env,'push-register',30);const data=await bodyJSON(request);
@@ -155,6 +160,7 @@ export default {
         if(data.responseToQuestion){const latest=[...state.messages].reverse().find(m=>m.role==='assistant');if(typeof data.responseToQuestion!=='string'||questionChoices(latest||{}).reference!==data.responseToQuestion)throw new AppError('That question has changed. Use the latest answer buttons, or type or speak your answer.',409);}
         let photoData=null;
         if(data.photoId) { attachmentOwner(state,data.photoId); await limit(request,env,'ai',60); const file=await env.PHOTOS.get(`${id}/${data.photoId}`); if(!file)throw new AppError('Photo no longer available.',404); try{photoData=await analyzePhoto(env,file,text);}catch{console.warn(JSON.stringify({event:'photo_interpretation_failed',model:VISION_MODEL}));photoData={type:'other',notes:'The image-processing service did not complete. Your photo is saved; please retry or enter the reading.'};} }
+        if(data.photoId){const metadata=state.photos.find(p=>p.id===data.photoId);metadata.analysis=photoData;metadata.userText=text;metadata.analyzedAt=now();}
         const userMessage=message('user',text||'Photo attached',data.photoId?{photoId:data.photoId,photoUrl:`/api/photos/${data.photoId}`}:{ });
         state.messages.push(userMessage);
         let reply;
@@ -167,6 +173,7 @@ export default {
         if(reply?.bagReading)reply=proposal(state,'bag',reply.bagReading);
 
         if(reply?.healthJob)ctx.waitUntil(processHealthJobs(env));
+        reply.agenda=careAgenda(state);
         delete reply.toolError;state.messages.push(reply); await store(env,id,state,version);
         ctx.waitUntil((async()=>{try{await backfillMemory(env,id,state);await archiveMessages(env,id,[userMessage]);await processIndexJobs(env);}catch{console.warn(JSON.stringify({event:'memory_archive_retry_needed'}));}})());
         return json({reply,state:publicState(state)});
@@ -180,7 +187,7 @@ export default {
         const valid=(file.type==='image/jpeg'&&bytes[0]===255&&bytes[1]===216)||(file.type==='image/png'&&bytes[0]===137&&bytes[1]===80&&bytes[2]===78&&bytes[3]===71)||(file.type==='image/webp'&&new TextDecoder().decode(bytes.slice(0,4))==='RIFF'&&new TextDecoder().decode(bytes.slice(8,12))==='WEBP');
         if(!valid)throw new AppError('The file does not match its image type.');
         const photoId=uid(); await env.PHOTOS.put(`${id}/${photoId}`,bytes,{httpMetadata:{contentType:file.type}});
-        try { for(let attempt=0;attempt<4;attempt++){const {state,version}=await load(env,id);if(state.photos.length>=100)throw new AppError('Preview photo storage is full. Delete a photo first.',409);state.photos.push({id:photoId,type:file.type,createdAt:now()});try{await store(env,id,state,version);break;}catch(e){if(e.status!==409||attempt===3)throw e;}} } catch(e){await env.PHOTOS.delete(`${id}/${photoId}`);throw e;}
+        try { for(let attempt=0;attempt<4;attempt++){const {state,version}=await load(env,id);if(!id.startsWith('clerk:')&&state.photos.length>=100)throw new AppError('Preview photo storage is full. Sign in for your personal journal.',409);state.photos.push({id:photoId,type:file.type,byteSize:file.size,createdAt:now()});try{await store(env,id,state,version);break;}catch(e){if(e.status!==409||attempt===3)throw e;}} } catch(e){await env.PHOTOS.delete(`${id}/${photoId}`);throw e;}
         return json({id:photoId,url:`/api/photos/${photoId}`});
       }
       const photo=path.match(/^\/api\/photos\/([a-f0-9-]+)$/);

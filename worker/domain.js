@@ -31,12 +31,17 @@ const string = (v, name, max = 300) => { if (typeof v !== 'string' || !v.trim() 
 const number = (v, name, min, max) => { const n = Number(v); if (!Number.isFinite(n) || n < min || n > max) throw new AppError(`Please provide ${name} between ${min} and ${max}.`); return n; };
 export function proposal(state, kind, params) {
   let title, details;
-  if (kind === 'catheterization') {
+  if (kind === 'journalNote') {
+    if(!['catheter','vitals','medication','supplies','note','other'].includes(params.category))throw new AppError('Choose a journal category.');
+    params={note:string(params.note,'journal note',3000),category:params.category,time:params.time||now(),photoId:params.photoId||null};
+    if(!Number.isFinite(Date.parse(params.time))||params.photoId&&!state.photos.some(p=>p.id===params.photoId))throw new AppError('Choose a valid time and an account-owned photo.');
+    title='Save journal observation';details=[params.note,`Observed: ${new Intl.DateTimeFormat('en-US',{timeZone:state.settings.timezone,dateStyle:'medium',timeStyle:'short'}).format(new Date(params.time))} (${state.settings.timezone})`,'User observation, not a diagnosis.'];
+  } else if (kind === 'catheterization') {
     params = { volume: params.volume == null ? null : number(params.volume, 'volume in mL', 0, 3000), photoId: params.photoId || null, time: params.time || now() };
     if (!Number.isFinite(Date.parse(params.time))) throw new AppError('Please provide a valid time.');
     title = 'Record catheterization'; details = [`Time: ${new Intl.DateTimeFormat('en-US',{timeZone:state.settings.timezone||'UTC',dateStyle:'medium',timeStyle:'short'}).format(new Date(params.time))} (${state.settings.timezone||'UTC'})`, ...(params.photoId?['Estimated from the attached bag photo; check the scale before approval']:[]), params.volume == null ? 'Volume not recorded' : `${params.volume} mL`, 'Use one new catheter', state.inventory.find(i=>i.id==='catheter')?.count==null?'Stock count not configured; record use without deducting a balance':'Deduct 1 catheter from your supplies'];
   } else if (kind === 'careCorrection') {
-    const event=state.events.find(e=>e.id===params.eventId&&!e.voided);if(!event||!['catheterization','supplies','medication','vitals','bag'].includes(event.kind))throw new AppError('Choose an existing care event that can be undone.');params={eventId:event.id};title='Undo incorrect care entry';details=[event.title,event.detail,...(event.stockUntracked?['The original entry did not change a tracked stock balance.']:[]),'Keep the original and a correction in history. Reverse any recorded stock changes after approval.'];
+    const event=state.events.find(e=>e.id===params.eventId&&!e.voided);if(!event||!['catheterization','supplies','medication','vitals','bag','journalNote'].includes(event.kind))throw new AppError('Choose an existing care event that can be undone.');params={eventId:event.id};title='Undo incorrect care entry';details=[event.title,event.detail,...(event.stockUntracked?['The original entry did not change a tracked stock balance.']:[]),'Keep the original and a correction in history. Reverse any recorded stock changes after approval.'];
   } else if (kind === 'supplies') {
     params = { name: string(params.name || 'Catheters', 'product name'), boxes: number(params.boxes, 'number of boxes', 1, 1000), perBox: number(params.perBox, 'units per box', 1, 1000), photoId: params.photoId || null };
     if (!Number.isInteger(params.boxes) || !Number.isInteger(params.perBox)) throw new AppError('Box and unit counts must be whole numbers.');
@@ -74,10 +79,11 @@ export function proposal(state, kind, params) {
     const med = findMedication(state,params.medicationId||params.name);if(!med)throw new AppError('Choose a medication from your list.');
     const quantity=params.quantity==null?(med.unitsConfigured?med.unitsPerDose:null):number(params.quantity,'units used',0.01,1000);
     if(params.unit!=null && params.unit!==med.unit)throw new AppError(`Your stock unit is ${med.unit}. Please confirm the quantity in that unit.`);
-    if(med.stock!=null && quantity==null)throw new AppError('How many units did you use? Set units per dose or include the quantity when logging.');
+
     if(params.scheduledFor!=null&&!Number.isFinite(Date.parse(params.scheduledFor)))throw new AppError('Provide a valid scheduled dose time.');
-    params={medicationId:med.id,name:med.name,dosage:med.dosage,quantity,unit:med.unit,time:now(),...(params.scheduledFor?{scheduledFor:params.scheduledFor}:{})};
-    title=`Record ${med.name}`;details=[med.dosage,'Record as taken now',quantity==null?'Stock not configured; no stock deduction':`${quantity} ${med.unit} used${med.stock==null?'; stock not configured':'; deduct after approval'}`];
+    params={medicationId:med.id,name:med.name,dosage:med.dosage,quantity,unit:med.unit,time:params.time||now(),...(params.scheduledFor?{scheduledFor:params.scheduledFor}:{})};
+    if(!Number.isFinite(Date.parse(params.time)))throw new AppError('Provide a valid time taken.');
+    title=`Record ${med.name}`;details=[med.dosage,`Time taken: ${new Intl.DateTimeFormat('en-US',{timeZone:state.settings.timezone,dateStyle:'medium',timeStyle:'short'}).format(new Date(params.time))} (${state.settings.timezone})`,...(params.scheduledFor?[`Scheduled dose: ${new Intl.DateTimeFormat('en-US',{timeZone:state.settings.timezone,dateStyle:'medium',timeStyle:'short'}).format(new Date(params.scheduledFor))}`]:[]),quantity==null?'Units per dose not configured; no stock deduction. Your reported dose is recorded separately.':`${quantity} ${med.unit} used${med.stock==null?'; stock not configured':'; deduct after approval'}`];
   } else if (kind === 'medication') {
     params = { quantity: number(params.quantity ?? 1, 'tablets taken', 0.25, 20), name: 'Example medication' };
     title = 'Record example medication'; details = [`${params.quantity} tablet(s) of Example medication`, 'Record as taken now', `Deduct ${params.quantity} tablet(s) from supplies`, 'Preview medication only; this is not a prescribed regimen'];
@@ -85,10 +91,11 @@ export function proposal(state, kind, params) {
     params = { volume: number(params.volume, 'volume in mL', 0, 3000), photoId: params.photoId || null,time:params.time||now() };if(!Number.isFinite(Date.parse(params.time)))throw new AppError('Please provide a valid time.');
     title = 'Save bag reading'; details = [`${params.volume} mL currently in bag`, `Time: ${new Intl.DateTimeFormat('en-US',{timeZone:state.settings.timezone||'UTC',dateStyle:'medium',timeStyle:'short'}).format(new Date(params.time))} (${state.settings.timezone||'UTC'})`, 'Visual estimate checked by you', 'No catheter deducted; this is not cumulative urine output'];
   } else if (kind === 'vitals') {
-    params = { systolic: params.systolic == null ? null : number(params.systolic, 'systolic pressure', 30, 300), diastolic: params.diastolic == null ? null : number(params.diastolic, 'diastolic pressure', 20, 250), heartRate: params.heartRate == null ? null : number(params.heartRate, 'heart rate', 20, 250), ...(params.photoId ? {photoId:String(params.photoId)} : {}) };
+    params = { time:params.time||now(), systolic: params.systolic == null ? null : number(params.systolic, 'systolic pressure', 30, 300), diastolic: params.diastolic == null ? null : number(params.diastolic, 'diastolic pressure', 20, 250), heartRate: params.heartRate == null ? null : number(params.heartRate, 'heart rate', 20, 250), ...(params.photoId ? {photoId:String(params.photoId)} : {}) };
+    if(!Number.isFinite(Date.parse(params.time)))throw new AppError('Provide a valid reading time.');
     if ((params.systolic == null) !== (params.diastolic == null)) throw new AppError('Please provide both blood pressure numbers.');
     if (params.systolic == null && params.heartRate == null) throw new AppError('Please provide a blood pressure or heart-rate reading.');
-    title = 'Save your reading'; details = [params.systolic == null ? null : `Blood pressure: ${params.systolic}/${params.diastolic} mmHg`, params.heartRate == null ? null : `Heart rate: ${params.heartRate} bpm`, params.photoId ? 'Source: photo, check the displayed numbers before approving' : 'Source: entered by you'].filter(Boolean);
+    title = 'Save your reading'; details = [`Reading time: ${new Intl.DateTimeFormat('en-US',{timeZone:state.settings.timezone,dateStyle:'medium',timeStyle:'short'}).format(new Date(params.time))} (${state.settings.timezone})`,params.systolic == null ? null : `Blood pressure: ${params.systolic}/${params.diastolic} mmHg`, params.heartRate == null ? null : `Heart rate: ${params.heartRate} bpm`, params.photoId ? 'Source: photo, check the displayed numbers before approving' : 'Source: entered by you'].filter(Boolean);
   } else if (kind === 'settings') {
     const allowed = ['muted', 'handsFree', 'voicePauseMs', 'textScale', 'quietUntil', 'catheterIntervalHours', 'name', 'timezone', 'catheterRemindersEnabled', 'catheterStartAt', 'notificationsEnabled', 'catheterScheduleMode'];
     params = Object.fromEntries(Object.entries(params).filter(([k]) => allowed.includes(k)));
@@ -166,7 +173,7 @@ export function undoEvent(state, id) {
   const event = state.events.find(e => e.id === id);
   if (!event) throw new AppError('Record not found.', 404);
   if (event.voided) return message('assistant', 'This record has already been undone.');
-  if (!['catheterization', 'supplies', 'medication', 'vitals', 'bag'].includes(event.kind)) throw new AppError('Change this setting or invitation through the conversation instead.');
+  if (!['catheterization', 'supplies', 'medication', 'vitals', 'bag', 'journalNote'].includes(event.kind)) throw new AppError('Change this setting or invitation through the conversation instead.');
   if (event.delta) {
     const item = event.delta.medicationId ? state.medications.find(m=>m.id===event.delta.medicationId) : state.inventory.find(i => i.id === event.delta.itemId);
     const countKey=event.delta.medicationId?'stock':'count';

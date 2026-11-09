@@ -1,3 +1,4 @@
+import {createJournalUI} from './journal.js';
 import { questionChoices } from './question-choices.js';
 import { createHealthUI } from './health-systems.js';
 import { createChatScroll } from './chat-scroll.js';
@@ -22,6 +23,8 @@ const icons = {
 };
 function node(tag, className, text) { const el = document.createElement(tag); if (className) el.className = className; if (text !== undefined) el.textContent = text; return el; }
 function button(text, className, handler) { const el = node('button', className, text); el.type = 'button'; el.addEventListener('click', handler); return el; }
+async function readPhoto(photoId){const generation=accountGeneration;const headers=new Headers();const token=await window.Clerk?.session?.getToken();if(token)headers.set('Authorization',`Bearer ${token}`);const r=await fetch(`/api/photos/${encodeURIComponent(photoId)}`,{headers,credentials:'same-origin'});if(generation!==accountGeneration)throw staleError();if(!r.ok)throw new Error('Original photo unavailable.');const blob=await r.blob();if(generation!==accountGeneration)throw staleError();return blob;}
+const journalUI=createJournalUI({api,node,button,readPhoto,send,error,formatTime});
 const healthUI=createHealthUI({api,node,button,send,error});
 function focusComposer(explicit = false) { if (!ui.app.hidden && (!state?.settings?.handsFree || explicit) && (explicit || document.activeElement === ui.message)) ui.message.focus({preventScroll:true}); }
 function error(message) { ui.error.textContent = message || ''; ui.error.hidden = !message; }
@@ -82,6 +85,7 @@ function renderMessages() {
   if (message.photoId && state.photos?.some(photo => photo.id === message.photoId)) { const img = node('img','photo-message'); img.alt = 'Photo attached to this message'; body.append(img); photoLoads.push(() => loadHistoricalPhoto(img,message.photoId,generation)); body.append(button('Delete photo','secondary',() => deleteSavedPhoto(message.photoId))); }
   if (message.proposal) body.append(proposalCard(message.proposal));
   healthUI.render(body,message);
+  if(message.journalResult)journalUI.appendResults(body,message.journalResult);
   if (message.sources?.length) { const sources = node('div','sources'); sources.append(node('strong','','Learn more')); for (const source of message.sources) { try { const url = new URL(source.url,location.origin); if (url.protocol !== 'https:') continue; const a = node('a','',source.title || url.hostname); a.href = url.href; a.target = '_blank'; a.rel = 'noopener noreferrer'; sources.append(a); } catch {} } body.append(sources); }
   const answers=questionChoices(message);
   if (answers.choices.length) { const options = node('div','quick-replies');options.setAttribute('role','group');options.setAttribute('aria-label','Suggested answers');const currentQuestion=[...messages].reverse().find(m=>m.role==='assistant')?.id;answers.choices.forEach(text=>{const choice=button(text,'',()=>chooseReply(text,answers.reference));choice.dataset.staleQuestion=String(!!answers.reference&&message.id!==currentQuestion);choice.disabled=busy||uploadBusy||recording||choice.dataset.staleQuestion==='true';options.append(choice);});body.append(options);if(answers.reference){body.append(node('p','answer-hint',answers.hint));const other=button('Type or say something else','secondary',()=>{focusComposer(true);ui.announcer.textContent='Type your answer, or select Listen to speak.';});other.dataset.answerControl='true';other.dataset.staleQuestion=String(message.id!==currentQuestion);other.disabled=busy||uploadBusy||recording||other.dataset.staleQuestion==='true';body.append(other);} }
@@ -90,6 +94,7 @@ function renderMessages() {
  if (!messages.length) {
   const row = node('article','message assistant'); const mark = node('span','assistant-mark','✳'); mark.setAttribute('aria-hidden','true'); row.append(mark); const body = node('div','message-body'); body.append(node('div','message-meta','LET’S START HERE'),node('p','message-text','I can help you keep track of your day. Choose something below, or tell me what you need.')); const replies = node('div','quick-replies'); ['Log catheterization','Record medication','Add supplies','Invite a caregiver'].forEach(t => replies.append(button(t,'',() => send(t)))); body.append(replies); row.append(body); fragment.append(row);
  }
+ const latestBody=fragment.lastElementChild?.querySelector('.message-body');if(latestBody)appendCareCheckIn(latestBody);
  ui.messages.replaceChildren(fragment); photoLoads.forEach(load => load());
  clearTimeout(approvalTimer); const expiry = (state.messages || []).map(m => m.proposal).filter(p => p?.status === 'pending' && Date.parse(p.expiresAt) > Date.now()).map(p => Date.parse(p.expiresAt)); if (expiry.length) approvalTimer = setTimeout(renderMessages, Math.min(...expiry) - Date.now() + 50);
  chatScroll.afterRender(scrollPosition);
@@ -214,13 +219,14 @@ function renderPanel() {
   panel.append(grid,chatButton('Add a delivery','Add supplies'));
   if (!state.inventory?.length) panel.append(node('p','empty-state','No supplies added yet. Tell me what you have, or send a photo of a box.'));
  }
- if (activePage === 'Today' || activePage === 'History') {
-  const today = activePage === 'Today'; panel.append(panelHeader(today ? 'Your day, at a glance.' : 'A record you can return to.',today ? 'Your medication list, upcoming reminders, and confirmed care journal.' : 'Your confirmed activities. Undo a mistaken entry to correct the record.'));
-  if (today) { appendReminders(panel); appendMedicationCards(panel); panel.append(node('h2','section-heading','Today’s activity')); }
-  let events = [...(state.events || [])]; if (today) { const dateKey = date => new Intl.DateTimeFormat('en-CA',{timeZone:state.settings?.timezone || undefined}).format(date); events = events.filter(event => dateKey(new Date(event.createdAt)) === dateKey(new Date())); }
-  for (const event of events) { const card = node('article',`data-card event-row${event.voided ? ' muted-event' : ''}`); const detail = node('div'); detail.append(node('h2','',event.title),node('p','',event.detail || ''),node('time','',`${formatTime(event.createdAt)}${event.voided ? ' · Undone' : ''}`)); card.append(detail); if (!event.voided && ['catheterization','supplies','medication','vitals','bag'].includes(event.kind)) card.append(button('Undo','secondary',() => undo(event.id))); panel.append(card); }
-  if (!events.length) panel.append(node('p','empty-state',today ? 'Nothing logged today yet. Every small step counts.' : 'Your confirmed activities will appear here.'));
-  panel.append(chatButton('Log an activity','Log catheterization'));
+ if(activePage==='History')journalUI.render(panel);
+ if (activePage === 'Today') {
+  panel.append(panelHeader('Your day, at a glance.','Due care, your medication list, and confirmed activities.'));
+  appendCareCheckIn(panel);appendReminders(panel);appendMedicationCards(panel);
+  const dateKey = date => new Intl.DateTimeFormat('en-CA',{timeZone:state.settings?.timezone || undefined,year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
+  const events=(state.events||[]).filter(e=>dateKey(new Date(e.occurredAt||e.createdAt))===dateKey(new Date()));
+  for(const event of events){const card=node('article','data-card event-row');card.append(node('h2','',event.title),node('p','',event.detail),node('p','',`Observed: ${formatTime(event.occurredAt||event.createdAt)}${event.voided?' · Corrected':''}`));if(!event.voided&&['catheterization','bag','vitals','medication','supplies','journalNote'].includes(event.kind))card.append(button('Undo','secondary',()=>undo(event.id)));panel.append(card);}
+  if(!events.length)panel.append(node('p','','Nothing logged today.'));
  }
  if (activePage === 'Settings') {
   panel.append(panelHeader('Your profile and preferences.','Your daily routine at a glance. You can change it here or through the conversation.'));
@@ -261,7 +267,7 @@ function notificationCommand(text) {
 function chooseReply(text,questionId) { if(questionId)return send(text,questionId);const command = notificationCommand(text); return command ? notificationAction(command) : send(text); }
 async function refreshNotificationStatus() {
  const generation = accountGeneration;
- try { const next = await notificationStatus(window.Clerk?.user?.id || window.Clerk?.session?.user?.id); const server = window.Clerk?.session ? await api('/api/push/status') : null; if (generation !== accountGeneration) return; pushServerStatus = server; pushStatus = next; if (activePage === 'Settings' && state) renderPanel();const id=window.Clerk?.user?.id||window.Clerk?.session?.user?.id;if(!notificationBusy&&window.Clerk?.session&&next.permission==='granted'&&pendingNotificationEnable(id))await notificationAction('enable',{resume:true}); } catch {}
+ try { const next = await notificationStatus(window.Clerk?.user?.id || window.Clerk?.session?.user?.id); const server = window.Clerk?.session ? await api('/api/push/status',next.endpoint?{method:'POST',body:JSON.stringify({endpoint:next.endpoint})}:{}) : null; if (generation !== accountGeneration) return; pushServerStatus = server; pushStatus = next; if (activePage === 'Settings' && state) renderPanel();if(activePage==='Conversation'&&state)renderMessages();const id=window.Clerk?.user?.id||window.Clerk?.session?.user?.id;if(!notificationBusy&&window.Clerk?.session&&next.permission==='granted'&&(pendingNotificationEnable(id)||(next.enabled&&!server?.deviceRegistered)))await notificationAction('enable',{resume:true}); } catch {}
 }
 async function notificationAction(action,{resume=false}={}) {
  if (notificationBusy) return;
@@ -393,7 +399,7 @@ ui.account.addEventListener('click',async () => {
   try { await api('/api/session',{method:'DELETE'}); await window.sciappSignOut(); showWelcomeAfterSignOut(); } catch(e) {error(e.message);}
  } else if (config?.clerkPublishableKey) await window.sciappSignIn();
 });
-function clearAccountWork() { closePhotoOptions(); chatScroll.reset(); notificationBusy = false; pushServerStatus = null; pushStatus = {supported:false,enabled:false,permission:'unknown'}; accountGeneration++; voiceGeneration++; pendingRequests.forEach(controller => controller.abort()); pendingRequests.clear(); clearTimeout(approvalTimer); stopHandsFree(); handsFreePaused = false; if(recognition) {recognition.onend = null; recognition.abort(); recognition = null;} if(recorder?.state === 'recording') recorder.stop(); recorder = null; audioChunks = []; recordStream?.getTracks().forEach(track => track.stop()); resetRecording(); assistantSpeaking = false; window.speechSynthesis?.cancel(); uploadBusy = false; setBusy(false); revokeHistoricalPhotos(); removePhoto({deleteRemote:false}); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; ui.announcer.textContent = ''; ui.app.hidden = true; ui.welcome.hidden = false; switchPage('Conversation'); }
+function clearAccountWork() { journalUI.reset(); closePhotoOptions(); chatScroll.reset(); notificationBusy = false; pushServerStatus = null; pushStatus = {supported:false,enabled:false,permission:'unknown'}; accountGeneration++; voiceGeneration++; pendingRequests.forEach(controller => controller.abort()); pendingRequests.clear(); clearTimeout(approvalTimer); stopHandsFree(); handsFreePaused = false; if(recognition) {recognition.onend = null; recognition.abort(); recognition = null;} if(recorder?.state === 'recording') recorder.stop(); recorder = null; audioChunks = []; recordStream?.getTracks().forEach(track => track.stop()); resetRecording(); assistantSpeaking = false; window.speechSynthesis?.cancel(); uploadBusy = false; setBusy(false); revokeHistoricalPhotos(); removePhoto({deleteRemote:false}); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; ui.announcer.textContent = ''; ui.app.hidden = true; ui.welcome.hidden = false; switchPage('Conversation'); }
 function showWelcomeAfterSignOut() {
  clearAccountWork(); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; window.speechSynthesis?.cancel(); ui.app.hidden = true; ui.welcome.hidden = false; ui.account.hidden = true;
 }
@@ -412,3 +418,24 @@ window.addEventListener('pagehide',() => { stopHandsFree(); revokeHistoricalPhot
 if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message',event=>{if(event.data?.type==='sciapp:open-today' && state){switchPage('Today');api('/api/state').then(update).catch(e=>error(e.message));}});
 
 watchNotificationPermission(()=>{if(state&&!notificationBusy)refreshNotificationStatus();});
+
+function appendCareCheckIn(parent){
+ const agenda=state.agenda;if(!agenda)return;
+ const card=node('section','data-card care-check-in');card.setAttribute('aria-label','Current care reminders');
+ card.append(node('h3','','Your care check-in'),node('p','',`As of ${agenda.localNow} (${agenda.timezone})`));
+ if(agenda.next)card.append(node('p','',`Next: ${agenda.next.title} at ${formatTime(agenda.next.dueAt)}`));
+ const due=agenda.overdue.filter(t=>!state.reminderSnoozes?.[t.id]||Date.parse(state.reminderSnoozes[t.id])<=Date.now());
+ if(due.length)card.append(node('p','','These scheduled items have no confirmed record. Did you complete any of them?'));
+ for(const task of due){const row=node('div','care-due');row.append(node('p','',`${task.title} · ${formatTime(task.dueAt)}`));
+ if(task.kind==='medication'){
+ row.append(button('I took this dose','secondary',()=>{const d=node('dialog','journal-dialog');d.append(node('h2','','When did you take it?'),node('p','',task.title));for(const [label,timing]of [['At the scheduled time','scheduled'],['Just now','now']])d.append(button(label,'primary',()=>{d.close();d.remove();reviewReminder(task,timing);}));d.append(button('Another time','secondary',()=>{d.close();d.remove();send(`I took ${task.title}, scheduled for ${task.dueAt}, at a different time. Ask me when.`);}));d.append(button('Cancel','secondary',()=>{d.close();d.remove();}));d.addEventListener('close',()=>d.remove(),{once:true});document.body.append(d);d.showModal();}));
+ row.append(button('Ask again in 30 minutes','secondary',async()=>{try{const r=await api('/api/reminders/snooze',{method:'POST',body:JSON.stringify({occurrenceId:task.id})});update(r.state);}catch(e){error(e.message);}}));
+ }else row.append(chatButton('Record this catheterization',`Help me record catheterization scheduled for ${task.dueAt}. Ask whether I did it and the volume.`));card.append(row);}
+ if(agenda.unscheduledMedications.length)card.append(node('p','',`No reminder times: ${agenda.unscheduledMedications.map(m=>m.name).join(', ')}. Tell me the times to add them.`));
+ if(window.Clerk?.session&&!pushStatus.enabled)card.append(node('p','','This browser is not connected for notifications. Chat check-ins still work.'),button('Enable notifications on this device','primary',()=>notificationAction('enable')));
+ card.append(node('p','answer-hint','Choose a button, or type or say anything else. A missing record does not mean a dose was missed.'));
+ card.querySelectorAll('button').forEach(b=>{b.dataset.answerControl='true';b.disabled=busy||uploadBusy||recording;});
+ parent.append(card);
+}
+async function reviewReminder(task,timing){if(busy)return;const generation=accountGeneration;setBusy(true);stopHandsFree();try{receive(await api('/api/reminders/review',{method:'POST',body:JSON.stringify({occurrenceId:task.id,timing})}));}catch(e){error(e.message);}finally{if(generation===accountGeneration){setBusy(false);resumeHandsFree();}}}
+setInterval(async()=>{if(!state||busy||uploadBusy||recording||document.visibilityState!=='visible'||!['Conversation','Today'].includes(activePage)||ui.message.value.trim())return;try{const next=await api('/api/state');if(!busy&&!uploadBusy&&!recording&&['Conversation','Today'].includes(activePage)&&!ui.message.value.trim()&&!document.querySelector('dialog[open]'))update(next);}catch{}},60000);

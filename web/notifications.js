@@ -31,7 +31,7 @@ export async function notificationStatus(accountId) {
  if (!supported()) return {supported:false,enabled:false,permission:'unavailable'};
  let sub = await subscription();
  if(sub && accountId && owner() !== accountId) { if(!await sub.unsubscribe()) throw new Error('Unable to stop notifications belonging to the previous account.');sub=null;rememberOwner(null); }
- return {supported:true,enabled:!!sub && Notification.permission === 'granted',permission:Notification.permission};
+ return {supported:true,enabled:!!sub && Notification.permission === 'granted',permission:Notification.permission,endpoint:sub?.endpoint||null};
 }
 export async function enableNotifications(api, config, accountId) {
  if (!supported()) throw new Error('This browser does not support push notifications. Open SCIapp in Chrome on Android.');
