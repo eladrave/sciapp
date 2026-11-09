@@ -125,7 +125,7 @@ export function proposal(state, kind, params) {
   // An approval must always name a specific, current action.
   for (const p of state.proposals) if (p.status === 'pending') { p.status = 'cancelled'; for (const m of state.messages) if (m.proposal?.id === p.id) m.proposal.status = 'cancelled'; }
   const p = { id: uid(), kind, title, details, params, status: 'pending', createdAt: now(), expiresAt: new Date(Date.now() + 30 * 60000).toISOString() };
-  state.proposals.push(p); state.draft = null;delete state.medicationCheckIn;
+  state.proposals.push(p); state.draft = null;if(kind==='medicationBatch')delete state.medicationCheckIn;
   return message('assistant', 'Please review this before I save it.', { proposal: publicProposal(p), options: [] });
 }
 export function publicProposal(p) { const { params, ...publicFields } = p; return { ...publicFields, ...(['bag','catheterization'].includes(p.kind)&&p.params.photoId?{editablePhotoCare:true}:{}), ...(p.kind === 'settings' ? { changedSettings: Object.keys(params) } : {}) }; }

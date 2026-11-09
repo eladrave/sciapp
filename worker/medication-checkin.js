@@ -1,5 +1,5 @@
 import {careAgenda} from './reminders.js';
-import {AppError,message,proposal} from './domain.js';
+import {AppError,message,proposal,publicProposal} from './domain.js';
 
 export function currentMedicationCheckIn(state){
  const c=state.medicationCheckIn;
@@ -15,7 +15,8 @@ function question(state){
 }
 export function medicationCheckInAction(state,data){
  const action=data.action,c=currentMedicationCheckIn(state);
- if(!['all','some','select','time','later','cancel'].includes(action))throw new AppError('Choose a supported medication check-in action.');
+ if(!['all','some','select','time','later','cancel','resume'].includes(action))throw new AppError('Choose a supported medication check-in action.');
+ if(action==='resume')return resumeMedicationCheckIn(state,data.checkInId);
  if(data.checkInId&&(data.checkInId!==c?.id||data.revision!=null&&data.revision!==c.revision))throw new AppError('That question changed. Use the latest medication check-in.',409);
  if(action==='cancel'){delete state.medicationCheckIn;return message('assistant','Medication check-in cancelled. No doses were recorded.');}
  if(['all','some','later'].includes(action)){
@@ -59,4 +60,29 @@ export function applyMedicationSelectionDraft(state,draft){
  const ids=draft.takenMedicationIds;
  if(!Array.isArray(ids)||new Set(ids).size!==ids.length||ids.some(id=>!c.medications.some(m=>m.medicationId===id)))throw new AppError('Choose medicines from the current check-in.');
  c.takenMedicationIds=[...ids];
+}
+
+function recoverableGroup(state){
+ const draft=state.medicationCheckIn;if(!draft)return null;
+ const group=careAgenda(state).medicationGroups.find(g=>g.id===draft.groupId);
+ if(!group||group.medications.some(m=>!draft.medications.some(old=>old.occurrenceId===m.occurrenceId)))return null;
+ return {draft,group};
+}
+export function medicationCheckInResume(state){
+ const latest=[...state.messages].reverse().find(m=>m.role==='assistant');
+ const review=state.proposals.filter(p=>p.kind==='medicationBatch'&&p.status==='pending'&&Date.parse(p.expiresAt)>Date.now()).at(-1);
+ if(review&&latest?.proposal?.id!==review.id)return {id:review.id,type:'review',clock:new Intl.DateTimeFormat('en-US',{timeZone:state.settings.timezone||'UTC',hour:'numeric',minute:'2-digit'}).format(new Date(review.params.scheduledFor)),reportedTakenCount:review.params.takenMedicationIds.length};
+ const recovery=recoverableGroup(state);if(!recovery)return null;
+ const {draft,group}=recovery;
+ if(latest?.medicationCheckIn?.id===draft.id&&Date.parse(draft.expiresAt)>Date.now())return null;
+ return {id:draft.id,groupId:draft.groupId,type:'setup',stage:draft.stage,clock:draft.clock,reportedTakenCount:group.medications.filter(m=>draft.takenMedicationIds.includes(m.medicationId)).length,total:group.medications.length};
+}
+function resumeMedicationCheckIn(state,id){
+ const review=state.proposals.filter(p=>p.kind==='medicationBatch'&&p.status==='pending'&&Date.parse(p.expiresAt)>Date.now()).at(-1);
+ if(review&&(!id||id===review.id))return message('assistant','Your medication report is already prepared. Review it here; you do not need to select the medicines again.',{proposal:publicProposal(review)});
+ const recovered=recoverableGroup(state);if(!recovered||id&&id!==recovered.draft.id)throw new AppError('That medication group changed or was already recorded. Check Today before starting another record.',409);
+ if(state.proposals.some(p=>p.status==='pending'&&Date.parse(p.expiresAt)>Date.now()))throw new AppError('Finish or cancel the current care review before resuming the medication check-in.',409);
+ const {draft,group}=recovered;
+ draft.medications=group.medications.map((m,index)=>({...m,number:index+1}));draft.takenMedicationIds=draft.takenMedicationIds.filter(id=>group.medications.some(m=>m.medicationId===id));draft.stage=draft.takenMedicationIds.length?'time':'selection';draft.expiresAt=new Date(Date.now()+1800000).toISOString();
+ return question(state);
 }
