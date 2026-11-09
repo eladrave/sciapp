@@ -101,3 +101,5 @@ Version 0.8.4 adds editable AI provider/model settings in Admin → Settings →
 Version 0.8.5 adds configurable OpenAI-compatible base URLs, encrypted provider keys, model discovery, manual model IDs, and Responses/Chat Completions selection in Admin AI settings.
 
 Version 0.9.0 replaces the active care command parser with typed proposals and a bounded native tool loop. The model reads context, resolves times, prepares or revises reviews, and commits only an approved current review. It retains photo evidence, supports conversational corrections and grouped medication schedules, and improves photo menu contrast. Medication bottle inventory uses configured medication IDs. No model code execution is available. See docs/care-agent.md.
+
+Version 0.9.1 adds selectable clarification answers with free-form typing/speech, stale-question protection, medication photo strength/form matching, and reviewable care corrections. Earlier approved entries are not automatically rewritten.

@@ -63,3 +63,30 @@ test('Responses provider receives native function call and tool-result items',as
  const {chatResponse}=await import('../worker/ai-config.js');const original=globalThis.fetch;globalThis.fetch=async(_u,r)=>{const p=JSON.parse(r.body);assert.equal(p.input[1].type,'function_call');assert.equal(p.input[2].type,'function_call_output');assert.equal(p.input[2].call_id,'c1');return Response.json({status:'completed',output:[{type:'message',content:[{type:'output_text',text:'Ready'}]}]});};
  try{await chatResponse({OPENAI_API_KEY:'synthetic'},{messages:[{role:'user',content:'Help'},{role:'assistant',content:null,tool_calls:[{id:'c1',type:'function',function:{name:'get_care_context',arguments:'{}'}}]},{role:'tool',tool_call_id:'c1',content:'{}'}],tools:agentCareTools});}finally{globalThis.fetch=original;}
 });
+
+test('photo medication identity accepts strength/form labels, rejects wrong strength and preserves catheter stock',async()=>{
+ const {findMedicationFromPhoto}=await import('../worker/medications.js');const s=state();s.medications=[{id:'gaba',name:'Gabapentin',dosage:'800 mg',frequency:'3 times daily',active:true,stock:null,unit:'units'}];
+ assert.equal(findMedicationFromPhoto(s,'GABAPENTIN 800 MG TAB').id,'gaba');assert.equal(findMedicationFromPhoto(s,'Gabapentin 100 mg capsule'),null);
+ const c=context();c.photoData={type:'medication',medicationName:'Gabapentin 800 mg tab',stockCount:90,stockUnit:'tablets'};
+ const result=await structuredCareTool(s,'record this bottle',tool('prepare_care_change',{change:{kind:'medStock',params:{medicationId:'gaba',stock:90,unit:'tablets'}},source:source('this bottle','photo')}),c);
+ assert.equal(result.reply.proposal.kind,'medStock');assert.equal(s.inventory[0].count,null);assert.equal(s.medications[0].stock,null);
+});
+test('clarification questions provide selectable answers plus a free-form hint',async()=>{
+ const reply=await runCareAgent({},'synthetic',state(),'record this bottle',{},async()=>({kind:'tool',tool:tool('ask_care_question',{question:'Is 90 tablets your current count?',choices:['Yes, 90 tablets','No, a different count','Cancel']})}));
+ assert.equal(reply.options.length,3);assert.ok(reply.questionId);assert.match(reply.answerHint,/type or say/);
+ const fallback=await runCareAgent({},'synthetic',state(),'record this bottle',{},async()=>({kind:'reply',content:'Do you want to use 90? Reply yes.'}));assert.deepEqual(fallback.options,['Yes','No','Cancel']);assert.match(fallback.answerHint,/type or say/);
+});
+test('incorrect care entries can be undone through a review, restoring the supply label without inventing a balance',async()=>{
+ const s=state();s.inventory[0].name='Gabapentin bottle';s.events=[{id:'bad-entry',kind:'supplies',title:'Add supply delivery',detail:'90 catheters',createdAt:new Date().toISOString(),stockUntracked:true,delta:null,data:{name:'Gabapentin bottle'}}];
+ const result=await structuredCareTool(s,'Undo that wrong bottle entry',tool('prepare_care_change',{change:{kind:'careCorrection',params:{eventId:'bad-entry'}},source:source('wrong bottle entry')}),context());
+ assert.equal(s.events[0].voided,undefined);finishProposal(s,result.reply.proposal.id,'approve');assert.equal(s.events.find(e=>e.id==='bad-entry').voided,true);assert.equal(s.inventory[0].name,'Catheters');assert.equal(s.inventory[0].count,null);assert.equal(s.events[0].kind,'correction');
+});
+
+test('cancelling a clarification clears unresolved photo context without modifying care',async()=>{
+ const s=state();s.careObservation={photoId:'pending',awaitingReview:true};const reply=await structuredCareTool(s,'Cancel',tool('cancel_care_setup'),context());assert.equal(s.careObservation,undefined);assert.equal(s.events.length,0);assert.match(reply.reply.content,/No care records were changed/);
+});
+
+test('legacy plain-text yes questions receive buttons and a stable question reference',async()=>{
+ const {questionChoices}=await import('../web/question-choices.js');const view=questionChoices({id:'old-question',role:'assistant',content:'Do you want me to set gabapentin stock to 90 tablets? If so, reply yes.'});assert.deepEqual(view.choices,['Yes','No','Cancel']);assert.equal(view.reference,'legacy:old-question');assert.match(view.hint,/type or say/);
+ assert.equal(questionChoices({id:'u',role:'user',content:'yes?'}).reference,null);assert.deepEqual(questionChoices({id:'done',role:'assistant',content:'Saved.'}).choices,[]);
+});

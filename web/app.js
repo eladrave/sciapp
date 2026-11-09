@@ -1,3 +1,4 @@
+import { questionChoices } from './question-choices.js';
 import { createHealthUI } from './health-systems.js';
 import { createChatScroll } from './chat-scroll.js';
 import { confirmationDelay } from './conversation-controls.js';
@@ -82,7 +83,8 @@ function renderMessages() {
   if (message.proposal) body.append(proposalCard(message.proposal));
   healthUI.render(body,message);
   if (message.sources?.length) { const sources = node('div','sources'); sources.append(node('strong','','Learn more')); for (const source of message.sources) { try { const url = new URL(source.url,location.origin); if (url.protocol !== 'https:') continue; const a = node('a','',source.title || url.hostname); a.href = url.href; a.target = '_blank'; a.rel = 'noopener noreferrer'; sources.append(a); } catch {} } body.append(sources); }
-  if (message.options?.length) { const options = node('div','quick-replies'); message.options.forEach(text => options.append(button(text,'',() => chooseReply(text)))); body.append(options); }
+  const answers=questionChoices(message);
+  if (answers.choices.length) { const options = node('div','quick-replies');options.setAttribute('role','group');options.setAttribute('aria-label','Suggested answers');const currentQuestion=[...messages].reverse().find(m=>m.role==='assistant')?.id;answers.choices.forEach(text=>{const choice=button(text,'',()=>chooseReply(text,answers.reference));choice.disabled=busy||!!answers.reference&&message.id!==currentQuestion;options.append(choice);});body.append(options);if(answers.reference){body.append(node('p','answer-hint',answers.hint));const other=button('Type or say something else','secondary',()=>{focusComposer(true);ui.announcer.textContent='Type your answer, or select Listen to speak.';});other.disabled=busy;body.append(other);} }
   row.append(body); fragment.append(row);
  }
  if (!messages.length) {
@@ -103,7 +105,7 @@ function proposalCard(proposal) {
  return card;
 }
 function changesSound(proposal) { return proposal?.kind === 'settings' && proposal.changedSettings?.includes('muted'); }
-function replyText(reply) { if (!reply) return ''; return [reply.content, reply.proposal?.title, ...(reply.proposal?.details || []), reply.proposal?.status === 'pending' ? 'Say approve or cancel.' : ''].filter(Boolean).join('. '); }
+function replyText(reply) { if (!reply) return ''; return [reply.content, reply.proposal?.title, ...(reply.proposal?.details || []), reply.proposal?.status === 'pending' ? 'Choose Approve or Cancel, or type or say a correction.' : '',reply.answerHint||''].filter(Boolean).join('. '); }
 function receive(result, soundApproval = false) { if(activePage === 'Conversation') chatScroll.latest(); update(result.state); if (soundApproval && typeof state.settings?.muted === 'boolean') setMute(state.settings.muted); const text = replyText(result.reply); ui.announcer.textContent = text; speak(text); }
 async function act(id, decision) {
  if (busy) return; const generation = accountGeneration; const settingsApproval = decision === 'approve' && state.messages?.some(message => message.proposal?.id === id && changesSound(message.proposal)); setBusy(true); error(); stopHandsFree(); chatScroll.latest();
@@ -111,14 +113,14 @@ async function act(id, decision) {
  catch(e) { if(e.name !== 'AbortError') error(e.message); }
  finally { if(generation === accountGeneration) { setBusy(false); focusComposer(); resumeHandsFree(); } }
 }
-async function send(text = ui.message.value) {
+async function send(text = ui.message.value, responseToQuestion) {
  if (busy || uploadBusy || recording) return;
  const content = text.trim(); if (!content && !photo) { focusComposer(true); return; }
  const generation = accountGeneration;
  const pendingSettings = new Set((state.messages || []).filter(message => changesSound(message.proposal) && message.proposal.status === 'pending').map(message => message.proposal.id));
  stopHandsFree();
  switchPage('Conversation',{latest:true}); setBusy(true); error();
- try { const result = await api('/api/chat',{method:'POST',body:JSON.stringify({message:content || 'Help me record this photo.',...(photo ? {photoId:photo.id} : {})})}); ui.message.value = ''; ui.message.style.height = ''; removePhoto({deleteRemote:false}); receive(result,state.messages?.some(message => pendingSettings.has(message.proposal?.id) && result.state.messages?.some(next => next.proposal?.id === message.proposal.id && next.proposal.status === 'approved'))); }
+ try { const result = await api('/api/chat',{method:'POST',body:JSON.stringify({message:content || 'Help me record this photo.',...(responseToQuestion?{responseToQuestion}:{}),...(photo ? {photoId:photo.id} : {})})}); ui.message.value = ''; ui.message.style.height = ''; removePhoto({deleteRemote:false}); receive(result,state.messages?.some(message => pendingSettings.has(message.proposal?.id) && result.state.messages?.some(next => next.proposal?.id === message.proposal.id && next.proposal.status === 'approved'))); }
  catch(e) { if(e.name !== 'AbortError') error(e.message); } finally { if(generation === accountGeneration) { setBusy(false); focusComposer(); resumeHandsFree(); } }
 }
 function speak(text) {
@@ -256,7 +258,7 @@ function notificationCommand(text) {
  if (['send test notification','test notifications','test notification'].includes(command)) return 'test';
  return null;
 }
-function chooseReply(text) { const command = notificationCommand(text); return command ? notificationAction(command) : send(text); }
+function chooseReply(text,questionId) { if(questionId)return send(text,questionId);const command = notificationCommand(text); return command ? notificationAction(command) : send(text); }
 async function refreshNotificationStatus() {
  const generation = accountGeneration;
  try { const next = await notificationStatus(window.Clerk?.user?.id || window.Clerk?.session?.user?.id); const server = window.Clerk?.session ? await api('/api/push/status') : null; if (generation !== accountGeneration) return; pushServerStatus = server; pushStatus = next; if (activePage === 'Settings' && state) renderPanel();const id=window.Clerk?.user?.id||window.Clerk?.session?.user?.id;if(!notificationBusy&&window.Clerk?.session&&next.permission==='granted'&&pendingNotificationEnable(id))await notificationAction('enable',{resume:true}); } catch {}

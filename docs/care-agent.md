@@ -23,3 +23,11 @@ Assumptions and extraction estimates are displayed with the review, alongside ex
 ## Validation
 
 Automated tests exercise context/time/proposal loops, medication schedules without legacy input grammar, typed rejection, PRN handling, revisions, exact-review commits, unknown tool rejection, clarification continuity, image/medication inventory separation, and provider-native tool-result conversion. Live tests use isolated synthetic state: the supplied bag image with “This is my 7am,” a conversational amount correction, and the supplied grouped medication schedule. No personal care events are saved by those tests.
+
+## Accessible clarifications and corrections
+
+Clarifications use `ask_care_question` with a question and two to six short answer buttons. The UI explains that users may type or speak any other answer, provides a composer-focus alternative and uses at least 48-pixel answer controls with visible keyboard focus. Questions have stable IDs; earlier answer buttons are disabled and the API rejects stale question-bound responses before recording a chat message. Free-form answers remain unrestricted. Plain model questions receive fallback choices if the model omits the question tool. Spoken replies include the alternative-input hint. `cancel_care_setup` dismisses unresolved clarification context without modifying saved care.
+
+Medication label matching removes photographed strength/form suffixes to identify an existing medication, then verifies the visible strength against the saved dose label. It does not normalize the user's conversational grammar or invent identities. Photo-based inventory counts require a matching medication ID and visible count/unit; remaining-balance assumptions remain reviewable.
+
+`careCorrection` prepares an undo review for an account-owned, reversible care event. Approval keeps the original and a correction record, reverses any tracked stock delta when valid, and restores a superseded supply label from another non-voided delivery or the generic Catheters label. It never invents a numeric stock balance. Preparing a correction does not itself alter the original event.

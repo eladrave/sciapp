@@ -13,7 +13,7 @@ export async function runCareAgent(env,id,state,text,initialContext={},model=int
  const context={...initialContext,agentMode:true,toolTrace:[],resolvedTimes:{},reviewTimeRefs:{},originalPendingIds:new Set(state.proposals.filter(p=>p.status==='pending').map(p=>p.id))};
  for(let step=0;step<6;step++){
   const result=await model(env,state,text,context);
-  if(result.kind!=='tool')return message('assistant',String(result.content||'What would you like to record?').slice(0,4000),{sources:result.sources||[]});
+  if(result.kind!=='tool'){const content=String(result.content||'What would you like to record?').slice(0,4000);const question=content.includes('?')||/reply.*yes|type.*yes/i.test(content);return message('assistant',content,{sources:result.sources||[],...(question?{options:/\b(?:yes|no)\b/i.test(content)||/\b(?:do you|would you|should i|shall i|is this|are these)\b/i.test(content)?['Yes','No','Cancel']:['I need help','Cancel'],questionId:crypto.randomUUID(),answerHint:'Choose a button, or type or say any other answer.'}:{})});}
   const tool=result.tool,callId=tool.callId||crypto.randomUUID();let observation;console.info(JSON.stringify({event:'care_agent_tool',turnId,step:step+1,tool:structured.has(tool.name)||readHealth.has(tool.name)||/^(?:memory_or_resources|connect_health_system|sync_health_records|prepare_imported_medication|set_health_auto_sync|disconnect_health_system|delete_imported_health_records|confirm_health_connection_action)$/.test(tool.name)?tool.name:'unsupported_tool'}));
   try{
    if(structured.has(tool.name)){

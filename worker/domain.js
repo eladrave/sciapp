@@ -35,6 +35,8 @@ export function proposal(state, kind, params) {
     params = { volume: params.volume == null ? null : number(params.volume, 'volume in mL', 0, 3000), photoId: params.photoId || null, time: params.time || now() };
     if (!Number.isFinite(Date.parse(params.time))) throw new AppError('Please provide a valid time.');
     title = 'Record catheterization'; details = [`Time: ${new Intl.DateTimeFormat('en-US',{timeZone:state.settings.timezone||'UTC',dateStyle:'medium',timeStyle:'short'}).format(new Date(params.time))} (${state.settings.timezone||'UTC'})`, ...(params.photoId?['Estimated from the attached bag photo; check the scale before approval']:[]), params.volume == null ? 'Volume not recorded' : `${params.volume} mL`, 'Use one new catheter', state.inventory.find(i=>i.id==='catheter')?.count==null?'Stock count not configured; record use without deducting a balance':'Deduct 1 catheter from your supplies'];
+  } else if (kind === 'careCorrection') {
+    const event=state.events.find(e=>e.id===params.eventId&&!e.voided);if(!event||!['catheterization','supplies','medication','vitals','bag'].includes(event.kind))throw new AppError('Choose an existing care event that can be undone.');params={eventId:event.id};title='Undo incorrect care entry';details=[event.title,event.detail,...(event.stockUntracked?['The original entry did not change a tracked stock balance.']:[]),'Keep the original and a correction in history. Reverse any recorded stock changes after approval.'];
   } else if (kind === 'supplies') {
     params = { name: string(params.name || 'Catheters', 'product name'), boxes: number(params.boxes, 'number of boxes', 1, 1000), perBox: number(params.perBox, 'units per box', 1, 1000), photoId: params.photoId || null };
     if (!Number.isInteger(params.boxes) || !Number.isInteger(params.perBox)) throw new AppError('Box and unit counts must be whole numbers.');
@@ -123,6 +125,7 @@ export function finishProposal(state, id, decision) {
   if (!['approve', 'cancel'].includes(decision)) throw new AppError('Choose approve or cancel.');
   if (decision === 'cancel') { p.status = 'cancelled'; syncProposal(state, p); return message('assistant', 'Cancelled. Your care records and supplies are unchanged.'); }
   const data = p.params;
+  if(p.kind==='careCorrection'){const reply=undoEvent(state,data.eventId);p.status='approved';syncProposal(state,p);return reply;}
   const event = { id: uid(), kind: p.kind, title: p.title, detail: p.details.join(' · '), createdAt: now(), occurredAt: data.time || now(), actor: state.profile.name, proposalId: p.id, delta: null, data: { ...data } };
   if(p.kind==='catheterSchedule'){if(data.timezone!==state.settings.timezone)throw new AppError('Your timezone changed. Please review the schedule again.',409);Object.assign(state.settings,{catheterTimes:data.times,catheterScheduleMode:'daily',catheterScheduleUpdatedAt:now(),catheterScheduleId:uid(),catheterRemindersEnabled:true,notificationsEnabled:true});}
   if (p.kind === 'catheterStock')state.inventory.find(i=>i.id==='catheter').count=data.count;
@@ -171,6 +174,7 @@ export function undoEvent(state, id) {
     if (item[countKey] - event.delta.quantity < 0) throw new AppError('This delivery cannot be undone because some of its stock has been used. Correct the inventory through a new entry.', 409);
     item[countKey] -= event.delta.quantity;
   }
+  if(event.kind==='supplies'){const item=state.inventory.find(i=>i.id==='catheter');if(item&&item.name===event.data?.name){const other=state.events.filter(e=>e.id!==event.id&&!e.voided&&e.kind==='supplies'&&e.data?.name).sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt))[0];item.name=other?.data.name||'Catheters';}}
   event.voided = true; event.voidedAt = now();
   state.events.unshift({ id: uid(), kind: 'correction', title: 'Record undone', detail: `Reversed: ${event.title}`, createdAt: now(), actor: state.profile.name, targetId: id });
   return message('assistant', 'Undone. I kept the original entry and correction in your history, and restored any supplies used.');

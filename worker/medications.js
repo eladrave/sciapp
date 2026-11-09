@@ -60,3 +60,15 @@ export function parseMedicationSchedule(text) {
  for(const med of medications){med.times.sort();if(!med.asNeeded)med.frequency=`${med.times.length} times daily`;}
  return {medications,allergies:[],invalid};
 }
+
+// A photographed medication label may include strength and form in its name.
+// Normalize that label, not the user's conversational wording, and verify strength.
+export function findMedicationFromPhoto(state,label){
+ const text=String(label||'').trim();
+ const dose=text.match(/\b(\d+(?:\.\d+)?)\s*(mg|mcg|µg|g|ml)\b/i);
+ const name=dose?text.slice(0,dose.index).trim():text;
+ const medication=findMedication(state,name);
+ if(!medication)return null;
+ if(dose){const saved=medication.dosage.match(/\b(\d+(?:\.\d+)?)\s*(mg|mcg|µg|g|ml)\b/i);if(!saved||Number(saved[1])!==Number(dose[1])||saved[2].toLowerCase()!==dose[2].toLowerCase())return null;}
+ return medication;
+}
