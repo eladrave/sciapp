@@ -1,4 +1,4 @@
-# Care journal and local-time reminders (0.11.2)
+# Care journal and local-time reminders (0.11.3)
 
 ## Reminder behavior
 
@@ -15,6 +15,10 @@ Minimal required hand movement is a product requirement recorded in `AGENTS.md`,
 The native `medication_checkin` tool and `POST /api/medication-checkin` share a bounded, account-owned workflow. Its active question expires after 30 minutes, but an interrupted reported selection can be resumed for the same unchanged daily medication occurrences. Completed or changed occurrences cannot be reused. Resuming asks only for missing timing or reopens the existing pending review, with no duplicate proposal or care writes. UI answers carry a check-in ID and revision so old buttons cannot change a later question. Ordinary speech can report all, some, named medicines, numbered selections, or all except a medicine. If a time is already provided, the tool resolves it and proceeds directly to a review. Touch and voice do not require the user to repeat the same facts in different formats. Unsaved checkbox drafts survive re-renders; later voice/text turns include the current selection as validated conversation context. The server checks its workflow ID, revision and owned medicine IDs before using it. Drafts never record care or change stock. Different actual times must not be collapsed into an invented shared time.
 
 Conversation check-in cards are suppressed while answering a focused care question or reviewing a proposal. Interrupted medication reports expose a compact Continue action, also available by voice, preserving already reported medicines. Connected browsers do not show empty or future-only cards. Hide for 30 minutes snoozes current due occurrences without changing care records, stock or schedules; newly due care can still appear.
+
+Dismiss beside a medication or care reminder hides only its occurrence from the chat agenda and push dispatcher. Today retains a dismissed label for that occurrence. The native `dismiss_reminders` tool and `POST /api/reminders/dismiss` validate account-owned occurrence IDs; ambiguous spoken targets require a clarification. Dismissal is prompt state, never a taken/skipped clinical event, stock mutation or recurring schedule change. Occurrence keys are schedule-version specific and short-lived dismissal metadata is pruned on subsequent dismissals.
+
+Chat following tracks user reading intent separately from layout changes. The scroll controller observes both the viewport and conversation content, including delayed photo/card sizing and the working indicator. Scrolling up preserves the reading position; new submitted turns return to the latest reply.
 
 ## Photo capture time
 
@@ -48,7 +52,7 @@ History provides category/date filters, original image viewing, comparison of up
 
 ## Validation
 
-- 127 automated tests passed, plus JavaScript syntax checks, build, and whitespace checks.
+- 129 automated tests passed, plus JavaScript syntax checks, build, and whitespace checks.
 - Coverage includes the exact 09:30 / 11:30 regression, medication occurrence matching independent of push permission, local-date retrieval across UTC midnight, 70-record pagination, account isolation, retained original references, correction visibility, and approved timed observations.
 - Live Remote Browser used an isolated signed-in test account, synthetic records, actual R2 uploads, the configured AI provider, actual APIs, approval and persistence.
 - Verified native AI requests for What's next, yesterday's BP, last three catheter images, and a reviewed color/cloudiness note with its original image and observation time.
@@ -60,6 +64,7 @@ History provides category/date filters, original image viewing, comparison of up
 - A valid synthetic JPEG uploaded today carried yesterday's original camera timestamp. The real vision model read 118/76 with pulse 65; the review used the camera time, and a subsequent ordinary-language correction changed the care occurrence to 8 AM while retaining the 7 AM original capture time and today's upload time.
 - Live v0.11.1 browser tests set an account-scoped denied permission, verified the accurate message and persisted blocked-before-request trace, then granted permission and verified automatic push registration, a ready trace and visible Chrome notification. These are isolated test-browser results, not a diagnosis of the owner’s Android phone.
 - Live v0.11.2 checks verified all-taken selection survives an interrupted and expired timing question, Continue restores only timing, ordinary-language continuation reaches the native resume tool, one approval records exactly three synthetic doses and removes the completed group, and Hide for 30 minutes removes the card without recording care.
+- Live v0.11.3 mobile checks at enlarged text verified delayed content follows the bottom, scrolling up survives viewport resize and page navigation, and per-medicine Dismiss removes only its selected occurrence. A real AI turn dismissed a named synthetic medicine while preserving all other reminders, future occurrences, care events, medication settings and stock. Dismiss buttons measured 48 CSS pixels high with no horizontal overflow. The local Playwright runner could not launch its Chromium executable and its Miniflare health check failed; equivalent targeted scroll assertions were run through Remote Browser instead. Physical Android keyboard behavior remains a device check.
 - Deployment verification must check both /api/health and an asset added by the release. Upload success and deployment metadata can precede traffic/asset propagation; refreshing during rollout can load mismatched module/font revisions. Use the production environment content endpoint when replacing code while preserving existing bindings/settings; verify the final asset and live behavior after propagation.
 - Physical Android permission and notification receipt still require a test on that phone. No claim of physical Android validation is made.
 

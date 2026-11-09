@@ -1,4 +1,4 @@
-import {careAgenda} from './reminders.js';
+import {careAgenda,reminderTasks} from './reminders.js';
 import {AppError,message} from './domain.js';
 
 export function snoozeCareCheckIn(state,{occurrenceIds,minutes=30}={}){
@@ -11,4 +11,15 @@ export function snoozeCareCheckIn(state,{occurrenceIds,minutes=30}={}){
  for(const id of ids)state.reminderSnoozes[id]=until;
  state.checkInHiddenUntil=until;
  return message('assistant',`Care check-in hidden for ${minutes} minutes. No care was recorded as completed. New due items can still appear, and your full schedule remains in Today.`);
+}
+
+// Dismissal is prompt state only, never a clinical adherence record.
+export function dismissReminders(state,{occurrenceIds}={}){
+ const tasks=reminderTasks(state);
+ if(!Array.isArray(occurrenceIds)||!occurrenceIds.length||occurrenceIds.length>100||new Set(occurrenceIds).size!==occurrenceIds.length||occurrenceIds.some(id=>typeof id!=='string'||!tasks.some(t=>t.id===id)))throw new AppError('Those reminders changed. Refresh and choose the reminder to dismiss.',409);
+ state.reminderDismissals=Object.fromEntries(Object.entries(state.reminderDismissals||{}).filter(([,expiry])=>Date.parse(expiry)>Date.now()));
+ const until=new Date(Date.now()+72*3600000).toISOString();
+ for(const id of occurrenceIds)state.reminderDismissals[id]=until;
+ if(state.medicationCheckIn?.medications.some(m=>occurrenceIds.includes(m.occurrenceId)))delete state.medicationCheckIn;
+ return message('assistant',`${occurrenceIds.length===1?'Reminder dismissed':'Reminders dismissed'} for this occurrence only. No care was recorded. Your schedule and future reminders stay the same.`);
 }

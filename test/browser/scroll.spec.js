@@ -64,3 +64,18 @@ test('hands-free replies never autofocus the software keyboard',async({page})=>{
  await expect(page.getByRole('textbox',{name:'Message your care companion'})).not.toBeFocused();
  await expect.poll(async()=>(await metrics(page)).bottom).toBeLessThan(3);
 });
+
+test('late photo/card growth and working-indicator changes keep latest visible without pulling readers away',async({page})=>{
+ await longConversation(page);
+ // Delayed decoded image/card sizing happens after afterRender's animation frame.
+ await page.locator('#messages article').last().evaluate(el=>{const card=document.createElement('div');card.id='late-card';card.style.height='600px';el.append(card);});
+ await expect.poll(async()=>(await metrics(page)).bottom).toBeLessThan(3);
+ await page.locator('#thinking').evaluate(el=>{el.hidden=false;});
+ await expect.poll(async()=>(await metrics(page)).bottom).toBeLessThan(3);
+ await page.locator('#main').evaluate(el=>{el.dispatchEvent(new WheelEvent('wheel'));el.scrollTop=900;});
+ await expect.poll(async()=>(await metrics(page)).top).toBeLessThan(1000);
+ const before=(await metrics(page)).top;
+ await page.locator('#late-card').evaluate(el=>el.style.height='1100px');
+ await page.setViewportSize({width:412,height:600});
+ await expect.poll(async()=>Math.abs((await metrics(page)).top-before)).toBeLessThan(3);
+});

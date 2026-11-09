@@ -1,12 +1,12 @@
 // Touch and voice share the server's medication-group workflow.
-export function createMedicationCheckInUI({node,button,run,send,isBusy}){
+export function createMedicationCheckInUI({node,button,run,send,dismiss,isBusy}){
  const drafts=new Map();let active=null;
  function selectionContext(){if(!active||active.stage!=='selection'||Date.parse(active.expiresAt||'9999-01-01')<=Date.now())return null;return{checkInId:active.id,revision:active.revision,takenMedicationIds:[...(drafts.get(active.id+':'+active.revision)||active.takenMedicationIds)]};}
  function reset(){drafts.clear();active=null;}
  function control(label,action,data,stale=false){const b=button(label,'secondary',()=>run(action,data));b.dataset.answerControl='true';b.dataset.staleQuestion=String(stale);b.disabled=stale||isBusy();return b;}
  function group(parent,g){
   const section=node('section','care-due medication-group');section.setAttribute('aria-label',`Medication for ${g.clock}`);
-  section.append(node('h4','',`Medication for ${g.clock}`));const list=node('ul');for(const m of g.medications)list.append(node('li','',m.title));section.append(list);
+  section.append(node('h4','',`Medication for ${g.clock}`));const list=node('ul');for(const m of g.medications){const item=node('li','',m.title);if(dismiss){const hide=button('Dismiss','secondary',()=>dismiss([m.occurrenceId]));hide.setAttribute('aria-label',`Dismiss reminder for ${m.title} at ${g.clock}`);hide.dataset.answerControl='true';hide.disabled=isBusy();item.append(hide);}list.append(item);}section.append(list);
   const actions=node('div','quick-replies');for(const [label,action]of [['Took them all','all'],['Took only some','some'],['Not yet','later']])actions.append(control(label,action,{groupId:g.id}));section.append(actions,node('p','answer-hint',`Say “took them all”, “only some”, or name the medicines. You can say “the ${g.clock} medicines” to choose this group.`));parent.append(section);
  }
  function question(parent,message,current){

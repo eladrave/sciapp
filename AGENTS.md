@@ -10,3 +10,5 @@ This product is for people who may have limited use of their hands. Minimize req
 - Use large controls, clear contrast, visible focus and useful screen-reader labels. Never require clicking a specific button when speaking an equivalent answer is possible.
 - Camera capture timestamps are untrusted photo metadata, separate from upload time. Label missing-timezone assumptions. An explicit user time takes priority, and every clinical record still requires review.
 - Test with synthetic data in the isolated test account and Remote Browser. Keep all real personal health data and credentials out of Git. Push every released version.
+
+- Dismissing a reminder affects only its selected occurrence. Never infer taken, skipped or completed care, change stock, or disable future reminders from dismissal.

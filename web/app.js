@@ -27,7 +27,7 @@ function node(tag, className, text) { const el = document.createElement(tag); if
 function button(text, className, handler) { const el = node('button', className, text); el.type = 'button'; el.addEventListener('click', handler); return el; }
 async function readPhoto(photoId){const generation=accountGeneration;const headers=new Headers();const token=await window.Clerk?.session?.getToken();if(token)headers.set('Authorization',`Bearer ${token}`);const r=await fetch(`/api/photos/${encodeURIComponent(photoId)}`,{headers,credentials:'same-origin'});if(generation!==accountGeneration)throw staleError();if(!r.ok)throw new Error('Original photo unavailable.');const blob=await r.blob();if(generation!==accountGeneration)throw staleError();return blob;}
 const journalUI=createJournalUI({api,node,button,readPhoto,send,error,formatTime});
-const medicationCheckInUI=createMedicationCheckInUI({node,button,run:runMedicationCheckIn,send,isBusy:()=>busy||uploadBusy||recording});
+const medicationCheckInUI=createMedicationCheckInUI({dismiss:dismissReminder,node,button,run:runMedicationCheckIn,send,isBusy:()=>busy||uploadBusy||recording});
 const healthUI=createHealthUI({api,node,button,send,error});
 function focusComposer(explicit = false) { if (!ui.app.hidden && (!state?.settings?.handsFree || explicit) && (explicit || document.activeElement === ui.message)) ui.message.focus({preventScroll:true}); }
 function error(message) { ui.error.textContent = message || ''; ui.error.hidden = !message; }
@@ -203,7 +203,7 @@ function appendReminders(panel) {
  card.append(node('p','',`Timezone: ${state.settings.timezone || 'Not set'}`));
  if(state.settings.catheterScheduleMode==='daily'&&state.settings.catheterTimes?.length)card.append(node('p','',`Catheterization every day: ${state.settings.catheterTimes.join(', ')}`));
  const tasks = state.reminderTasks || [];
- for (const task of tasks) card.append(node('p','',`${task.title} · ${formatTime(task.dueAt)}`));
+ for (const task of tasks) {const row=node('div','care-due');row.append(node('p','',`${task.title} · ${formatTime(task.dueAt)}`));if(Date.parse(state.reminderDismissals?.[task.id])>Date.now())row.append(node('p','','Reminder dismissed for this occurrence.'));else row.append(button('Dismiss','secondary',()=>dismissReminder([task.id])));card.append(row);}
  if (!tasks.length) card.append(node('p','','No upcoming reminders. Set exact medication times or start catheterization reminders.'));
  card.append(chatButton(state.settings.catheterRemindersEnabled ? 'Stop catheter reminders' : 'Start catheter reminders',state.settings.catheterRemindersEnabled ? 'Stop catheter reminders' : 'Start catheter reminders'));
  card.append(chatButton('Set timezone','Change my timezone')); panel.append(card);
@@ -432,7 +432,7 @@ function appendCareCheckIn(parent){
  const due=visibility.due;
  if(due.length&&!state.messages.at(-1)?.medicationCheckIn)card.append(node('p','','These scheduled items have no confirmed record. Did you complete any of them?'));
  for(const group of state.messages.at(-1)?.medicationCheckIn||state.messages.some(m=>m.proposal?.kind==='medicationBatch'&&m.proposal.status==='pending'&&Date.parse(m.proposal.expiresAt)>Date.now())?[]:agenda.medicationGroups||[]){if(group.medications.some(m=>due.some(t=>t.id===m.occurrenceId)))medicationCheckInUI.group(card,group);}
- for(const task of due.filter(t=>t.kind!=='medication')){const row=node('div','care-due');row.append(node('p','',`${task.title} · ${formatTime(task.dueAt)}`),chatButton('Record this catheterization',`Help me record catheterization scheduled for ${task.dueAt}. Ask whether I did it and the volume.`));card.append(row);}
+ for(const task of due.filter(t=>t.kind!=='medication')){const row=node('div','care-due');row.append(node('p','',`${task.title} · ${formatTime(task.dueAt)}`),chatButton('Record this catheterization',`Help me record catheterization scheduled for ${task.dueAt}. Ask whether I did it and the volume.`),button('Dismiss','secondary',()=>dismissReminder([task.id])));card.append(row);}
  if(agenda.unscheduledMedications.length)card.append(node('p','',`No reminder times: ${agenda.unscheduledMedications.map(m=>m.name).join(', ')}. Tell me the times to add them.`));
  if(visibility.showNotificationSetup)card.append(node('p','','This browser is not connected for notifications. Chat check-ins still work.'),button('Enable notifications on this device','primary',()=>notificationAction('enable')));
  card.append(button('Hide for 30 minutes','secondary',()=>hideCareCheckIn(due.map(t=>t.id))),node('p','answer-hint','Choose a button, or say “hide the check-in for now”. A missing record does not mean a dose was missed.'));
@@ -463,4 +463,12 @@ function appendMedicationResume(parent){
  const note=node('section','medication-resume');note.setAttribute('aria-label','Unfinished medication report');
  note.append(node('p','',resume.type==='review'?`${resume.clock} medicines: your report is awaiting approval.`:resume.reportedTakenCount?`${resume.clock} medicines: your taken selection is kept. Only the time and review remain.`:`Your ${resume.clock} medication selection is unfinished.`));
  const next=button(resume.type==='review'?'Continue medication review':'Continue medication check-in','secondary',()=>runMedicationCheckIn('resume',{checkInId:resume.id}));next.dataset.answerControl='true';next.disabled=busy||uploadBusy||recording;note.append(next,node('p','answer-hint','You can also say “continue my medication check-in”.'));parent.append(note);
+}
+
+async function dismissReminder(occurrenceIds){
+ if(busy||uploadBusy||recording)return;
+ const generation=accountGeneration;setBusy(true);error();stopHandsFree();
+ try{receive(await api('/api/reminders/dismiss',{method:'POST',body:JSON.stringify({occurrenceIds})}));}
+ catch(e){if(e.name!=='AbortError')error(e.message);}
+ finally{if(generation===accountGeneration){setBusy(false);resumeHandsFree();}}
 }

@@ -53,14 +53,14 @@ export function reminderTasks(state, at=Date.now()) {
 }
 export function dueTasks(state,at=Date.now()) {
  if(!state.settings.notificationsEnabled)return [];
- return reminderTasks(state,at).filter(task=>Date.parse(task.dueAt)<=at&&Date.parse(task.dueAt)>at-10*minute);
+ return reminderTasks(state,at).filter(task=>Date.parse(task.dueAt)<=at&&Date.parse(task.dueAt)>at-10*minute&&!(Date.parse(state.reminderDismissals?.[task.id])>at));
 }
 
 // All comparisons are instants; local labels are supplied for display, never compared as UTC clocks.
 export function careAgenda(state,at=Date.now()) {
  const timezone=state.settings.timezone||'UTC',p=localParts(at,timezone),localDate=`${p.year}-${p.month}-${p.day}`;
  const label=ms=>new Intl.DateTimeFormat('en-US',{timeZone:timezone,dateStyle:'medium',timeStyle:'short'}).format(new Date(ms));
- const tasks=reminderTasks(state,at).map(t=>({...t,localTime:label(t.dueAt),status:Date.parse(t.dueAt)<=at?'unconfirmed':'upcoming'}));
+ const tasks=reminderTasks(state,at).map(t=>({...t,localTime:label(t.dueAt),status:Date.parse(state.reminderDismissals?.[t.id])>at?'dismissed':Date.parse(t.dueAt)<=at?'unconfirmed':'upcoming'}));
  const overdue=tasks.filter(t=>t.status==='unconfirmed'&&`${localParts(Date.parse(t.dueAt),timezone).year}-${localParts(Date.parse(t.dueAt),timezone).month}-${localParts(Date.parse(t.dueAt),timezone).day}`===localDate);
  const next=tasks.find(t=>t.status==='upcoming')||null;
  return {now:new Date(at).toISOString(),localNow:label(at),localDate,timezone,overdue,next,tasks,medicationGroups:groupMedicationTasks(overdue,timezone),unscheduledMedications:(state.medications||[]).filter(m=>m.active!==false&&!m.asNeeded&&!m.times?.length).map(m=>({id:m.id,name:m.name}))};
