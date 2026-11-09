@@ -1,5 +1,6 @@
+import {reminderTasks,careAgenda} from './reminders.js';
 import { medicationKey, findMedication, parseCareList } from './medications.js';
-export const now = () => new Date().toISOString();
+export const now = () => new Date(Date.now()).toISOString();
 export const uid = () => crypto.randomUUID();
 export function message(role, content, extra = {}) { return { id: uid(), role, content, createdAt: now(), ...extra }; }
 export function initialState({ real = false } = {}) {
@@ -31,7 +32,11 @@ const string = (v, name, max = 300) => { if (typeof v !== 'string' || !v.trim() 
 const number = (v, name, min, max) => { const n = Number(v); if (!Number.isFinite(n) || n < min || n > max) throw new AppError(`Please provide ${name} between ${min} and ${max}.`); return n; };
 export function proposal(state, kind, params) {
   let title, details;
-  if (kind === 'journalNote') {
+  if(kind==='medicationBatch'){
+    const batch=medicationBatchParameters(state,params);params=batch;title=`Record medications for ${new Intl.DateTimeFormat('en-US',{timeZone:batch.timezone,hour:'numeric',minute:'2-digit'}).format(new Date(batch.scheduledFor))}`;
+    const local=t=>new Intl.DateTimeFormat('en-US',{timeZone:batch.timezone,dateStyle:'medium',timeStyle:'short'}).format(new Date(t));
+    details=[`Scheduled: ${local(batch.scheduledFor)} (${batch.timezone})`,`Taken at: ${local(batch.time)} (${batch.timezone})`,...batch.items.map(m=>`${m.taken?'Taken':'Not taken yet'}: ${m.name} ${m.dosage}${m.taken?m.quantity==null?' (stock unchanged, units per dose not configured)':`; ${m.quantity} ${m.unit}${m.stockTracked?' deducted after approval':' used, stock not tracked'}`:''}`),'One approval records this group. Not-taken-yet medicines stay unconfirmed; their chat check-in returns in 30 minutes.'];
+  } else if (kind === 'journalNote') {
     if(!['catheter','vitals','medication','supplies','note','other'].includes(params.category))throw new AppError('Choose a journal category.');
     params={note:string(params.note,'journal note',3000),category:params.category,time:params.time||now(),photoId:params.photoId||null};
     if(!Number.isFinite(Date.parse(params.time))||params.photoId&&!state.photos.some(p=>p.id===params.photoId))throw new AppError('Choose a valid time and an account-owned photo.');
@@ -41,7 +46,7 @@ export function proposal(state, kind, params) {
     if (!Number.isFinite(Date.parse(params.time))) throw new AppError('Please provide a valid time.');
     title = 'Record catheterization'; details = [`Time: ${new Intl.DateTimeFormat('en-US',{timeZone:state.settings.timezone||'UTC',dateStyle:'medium',timeStyle:'short'}).format(new Date(params.time))} (${state.settings.timezone||'UTC'})`, ...(params.photoId?['Estimated from the attached bag photo; check the scale before approval']:[]), params.volume == null ? 'Volume not recorded' : `${params.volume} mL`, 'Use one new catheter', state.inventory.find(i=>i.id==='catheter')?.count==null?'Stock count not configured; record use without deducting a balance':'Deduct 1 catheter from your supplies'];
   } else if (kind === 'careCorrection') {
-    const event=state.events.find(e=>e.id===params.eventId&&!e.voided);if(!event||!['catheterization','supplies','medication','vitals','bag','journalNote'].includes(event.kind))throw new AppError('Choose an existing care event that can be undone.');params={eventId:event.id};title='Undo incorrect care entry';details=[event.title,event.detail,...(event.stockUntracked?['The original entry did not change a tracked stock balance.']:[]),'Keep the original and a correction in history. Reverse any recorded stock changes after approval.'];
+    const event=state.events.find(e=>e.id===params.eventId&&!e.voided);if(!event||!['catheterization','supplies','medication','vitals','bag','journalNote','medicationStatus'].includes(event.kind))throw new AppError('Choose an existing care event that can be undone.');params={eventId:event.id};title='Undo incorrect care entry';details=[event.title,event.detail,...(event.stockUntracked?['The original entry did not change a tracked stock balance.']:[]),'Keep the original and a correction in history. Reverse any recorded stock changes after approval.'];
   } else if (kind === 'supplies') {
     params = { name: string(params.name || 'Catheters', 'product name'), boxes: number(params.boxes, 'number of boxes', 1, 1000), perBox: number(params.perBox, 'units per box', 1, 1000), photoId: params.photoId || null };
     if (!Number.isInteger(params.boxes) || !Number.isInteger(params.perBox)) throw new AppError('Box and unit counts must be whole numbers.');
@@ -120,7 +125,7 @@ export function proposal(state, kind, params) {
   // An approval must always name a specific, current action.
   for (const p of state.proposals) if (p.status === 'pending') { p.status = 'cancelled'; for (const m of state.messages) if (m.proposal?.id === p.id) m.proposal.status = 'cancelled'; }
   const p = { id: uid(), kind, title, details, params, status: 'pending', createdAt: now(), expiresAt: new Date(Date.now() + 30 * 60000).toISOString() };
-  state.proposals.push(p); state.draft = null;
+  state.proposals.push(p); state.draft = null;delete state.medicationCheckIn;
   return message('assistant', 'Please review this before I save it.', { proposal: publicProposal(p), options: [] });
 }
 export function publicProposal(p) { const { params, ...publicFields } = p; return { ...publicFields, ...(['bag','catheterization'].includes(p.kind)&&p.params.photoId?{editablePhotoCare:true}:{}), ...(p.kind === 'settings' ? { changedSettings: Object.keys(params) } : {}) }; }
@@ -130,8 +135,9 @@ export function finishProposal(state, id, decision) {
   if (p.status !== 'pending') return message('assistant', p.status === 'approved' ? 'This action was already saved. Nothing was counted twice.' : 'This action was cancelled. Nothing was changed.');
   if (Date.parse(p.expiresAt) <= Date.now()) throw new AppError('This approval has expired. Please ask again.', 409);
   if (!['approve', 'cancel'].includes(decision)) throw new AppError('Choose approve or cancel.');
-  if (decision === 'cancel') { p.status = 'cancelled'; syncProposal(state, p); return message('assistant', 'Cancelled. Your care records and supplies are unchanged.'); }
+  if (decision === 'cancel') { if(p.kind==='medicationBatch')delete state.medicationCheckIn;p.status = 'cancelled'; syncProposal(state, p); return message('assistant', 'Cancelled. Your care records and supplies are unchanged.'); }
   const data = p.params;
+  if(p.kind==='medicationBatch')return finishMedicationBatch(state,p);
   if(p.kind==='careCorrection'){const reply=undoEvent(state,data.eventId);p.status='approved';syncProposal(state,p);return reply;}
   const event = { id: uid(), kind: p.kind, title: p.title, detail: p.details.join(' · '), createdAt: now(), occurredAt: data.time || now(), actor: state.profile.name, proposalId: p.id, delta: null, data: { ...data } };
   if(p.kind==='catheterSchedule'){if(data.timezone!==state.settings.timezone)throw new AppError('Your timezone changed. Please review the schedule again.',409);Object.assign(state.settings,{catheterTimes:data.times,catheterScheduleMode:'daily',catheterScheduleUpdatedAt:now(),catheterScheduleId:uid(),catheterRemindersEnabled:true,notificationsEnabled:true});}
@@ -173,7 +179,7 @@ export function undoEvent(state, id) {
   const event = state.events.find(e => e.id === id);
   if (!event) throw new AppError('Record not found.', 404);
   if (event.voided) return message('assistant', 'This record has already been undone.');
-  if (!['catheterization', 'supplies', 'medication', 'vitals', 'bag', 'journalNote'].includes(event.kind)) throw new AppError('Change this setting or invitation through the conversation instead.');
+  if (!['catheterization', 'supplies', 'medication', 'vitals', 'bag', 'journalNote', 'medicationStatus'].includes(event.kind)) throw new AppError('Change this setting or invitation through the conversation instead.');
   if (event.delta) {
     const item = event.delta.medicationId ? state.medications.find(m=>m.id===event.delta.medicationId) : state.inventory.find(i => i.id === event.delta.itemId);
     const countKey=event.delta.medicationId?'stock':'count';
@@ -187,6 +193,33 @@ export function undoEvent(state, id) {
   return message('assistant', 'Undone. I kept the original entry and correction in your history, and restored any supplies used.');
 }
 export function view(state) {
-  const { draft, proposals, careObservation, ...visible } = state;
+  const { draft, proposals, careObservation, medicationCheckIn, ...visible } = state;
   return visible;
+}
+
+function medicationBatchParameters(state,input){
+ const taken=input.takenMedicationIds,notTaken=input.notTakenMedicationIds||[];
+ if(!Array.isArray(taken)||!taken.length||!Array.isArray(notTaken)||taken.length+notTaken.length>50||[...taken,...notTaken].some(id=>typeof id!=='string')||new Set([...taken,...notTaken]).size!==taken.length+notTaken.length)throw new AppError('Select the medicines taken and keep the two lists separate.');
+ if(typeof input.scheduledFor!=='string'||!Number.isFinite(Date.parse(input.scheduledFor))||!Number.isFinite(Date.parse(input.time))||Date.parse(input.time)>Date.now()+60000)throw new AppError('Choose a valid actual time in the past or now.');
+ const group=careAgenda(state).medicationGroups.find(g=>g.scheduledFor===input.scheduledFor);
+ const ids=[...taken,...notTaken];
+ if(!group||group.medications.length!==ids.length||group.medications.some(m=>!ids.includes(m.medicationId)))throw new AppError('This medication group changed. Refresh it before reviewing.',409);
+ const items=group.medications.map(task=>{const med=state.medications.find(m=>m.id===task.medicationId&&m.active!==false);if(!med||med.asNeeded)throw new AppError('The medication list changed. Review the group again.',409);const quantity=taken.includes(med.id)&&med.unitsConfigured?med.unitsPerDose:null;if(quantity!=null&&(!Number.isFinite(quantity)||quantity<=0))throw new AppError('Correct the configured units per dose before recording this group.');return {medicationId:med.id,occurrenceId:task.occurrenceId,name:med.name,dosage:med.dosage,unit:med.unit,taken:taken.includes(med.id),quantity,stockTracked:med.stock!=null};});
+ return {scheduledFor:input.scheduledFor,time:input.time,timezone:state.settings.timezone||'UTC',takenMedicationIds:[...taken],notTakenMedicationIds:[...notTaken],items};
+}
+function finishMedicationBatch(state,p){
+ const data=p.params,current=medicationBatchParameters(state,data);
+ if(current.timezone!==data.timezone||JSON.stringify(current.items)!==JSON.stringify(data.items))throw new AppError('A medication, stock setting, or schedule changed. Please review this group again.',409);
+ // Validate every row before changing stock or creating a care entry.
+ for(const item of data.items){const med=state.medications.find(m=>m.id===item.medicationId);if(item.taken&&item.quantity!=null&&med.stock!=null&&med.stock<item.quantity)throw new AppError(`There is not enough stock for ${med.name}. Correct its stock or dose units, then review the group again.`,409);}
+ const savedAt=now(),events=[];state.reminderSnoozes=Object.fromEntries(Object.entries(state.reminderSnoozes||{}).filter(([,value])=>Date.parse(value)>Date.now()));
+ for(const item of data.items){
+  const med=state.medications.find(m=>m.id===item.medicationId);let delta=null;
+  if(item.taken&&item.quantity!=null&&med.stock!=null){med.stock-=item.quantity;delta={medicationId:med.id,quantity:-item.quantity};}
+  const time=item.taken?data.time:savedAt;
+  events.push({id:uid(),kind:item.taken?'medication':'medicationStatus',title:item.taken?`Record ${item.name}`:`Not taken yet: ${item.name}`,detail:`${item.name} ${item.dosage} · ${item.taken?'Reported taken':'Reported not taken yet'} · Scheduled for ${new Intl.DateTimeFormat('en-US',{timeZone:data.timezone,dateStyle:'medium',timeStyle:'short'}).format(new Date(data.scheduledFor))} (${data.timezone})`,createdAt:savedAt,occurredAt:time,actor:state.profile.name,proposalId:p.id,batchId:p.id,delta,data:{medicationId:item.medicationId,name:item.name,dosage:item.dosage,quantity:item.taken?item.quantity:null,unit:item.unit,time,scheduledFor:data.scheduledFor,status:item.taken?'taken':'not_taken_yet'}});
+  if(item.taken)delete state.reminderSnoozes[item.occurrenceId];else state.reminderSnoozes[item.occurrenceId]=new Date(Date.now()+1800000).toISOString();
+ }
+ state.events.unshift(...events);p.status='approved';syncProposal(state,p);delete state.medicationCheckIn;
+ return message('assistant',`Saved: ${data.takenMedicationIds.length} medication${data.takenMedicationIds.length===1?'':'s'} recorded as taken${data.notTakenMedicationIds.length?`, ${data.notTakenMedicationIds.length} not taken yet. I will ask about those again in 30 minutes while the app is open, or when you next return`:''}.`,{options:['What is next?','Show my medications']});
 }

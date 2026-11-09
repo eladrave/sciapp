@@ -1,3 +1,4 @@
+import {createMedicationCheckInUI} from './medication-checkin.js';
 import {createJournalUI} from './journal.js';
 import { questionChoices } from './question-choices.js';
 import { createHealthUI } from './health-systems.js';
@@ -25,6 +26,7 @@ function node(tag, className, text) { const el = document.createElement(tag); if
 function button(text, className, handler) { const el = node('button', className, text); el.type = 'button'; el.addEventListener('click', handler); return el; }
 async function readPhoto(photoId){const generation=accountGeneration;const headers=new Headers();const token=await window.Clerk?.session?.getToken();if(token)headers.set('Authorization',`Bearer ${token}`);const r=await fetch(`/api/photos/${encodeURIComponent(photoId)}`,{headers,credentials:'same-origin'});if(generation!==accountGeneration)throw staleError();if(!r.ok)throw new Error('Original photo unavailable.');const blob=await r.blob();if(generation!==accountGeneration)throw staleError();return blob;}
 const journalUI=createJournalUI({api,node,button,readPhoto,send,error,formatTime});
+const medicationCheckInUI=createMedicationCheckInUI({node,button,run:runMedicationCheckIn,send,isBusy:()=>busy||uploadBusy||recording});
 const healthUI=createHealthUI({api,node,button,send,error});
 function focusComposer(explicit = false) { if (!ui.app.hidden && (!state?.settings?.handsFree || explicit) && (explicit || document.activeElement === ui.message)) ui.message.focus({preventScroll:true}); }
 function error(message) { ui.error.textContent = message || ''; ui.error.hidden = !message; }
@@ -76,7 +78,7 @@ function renderMessages() {
  const scrollPosition = chatScroll.capture();
  revokeHistoricalPhotos(); const generation = photoGeneration; const photoLoads = [];
  const fragment = document.createDocumentFragment();
- const messages = state.messages || [];
+ const messages = state.messages || [];medicationCheckInUI.beginRender();
  for (const message of messages) {
   const row = node('article', `message ${message.role === 'user' ? 'user' : 'assistant'}`); row.dataset.messageId = message.id;
   if (message.role !== 'user') { const mark = node('span','assistant-mark','✳'); mark.setAttribute('aria-hidden','true'); row.append(mark); }
@@ -85,6 +87,7 @@ function renderMessages() {
   if (message.photoId && state.photos?.some(photo => photo.id === message.photoId)) { const img = node('img','photo-message'); img.alt = 'Photo attached to this message'; body.append(img); photoLoads.push(() => loadHistoricalPhoto(img,message.photoId,generation)); body.append(button('Delete photo','secondary',() => deleteSavedPhoto(message.photoId))); }
   if (message.proposal) body.append(proposalCard(message.proposal));
   healthUI.render(body,message);
+  medicationCheckInUI.question(body,message,[...messages].reverse().find(m=>m.role==='assistant')?.id===message.id);
   if(message.journalResult)journalUI.appendResults(body,message.journalResult);
   if (message.sources?.length) { const sources = node('div','sources'); sources.append(node('strong','','Learn more')); for (const source of message.sources) { try { const url = new URL(source.url,location.origin); if (url.protocol !== 'https:') continue; const a = node('a','',source.title || url.hostname); a.href = url.href; a.target = '_blank'; a.rel = 'noopener noreferrer'; sources.append(a); } catch {} } body.append(sources); }
   const answers=questionChoices(message);
@@ -110,7 +113,7 @@ function proposalCard(proposal) {
  return card;
 }
 function changesSound(proposal) { return proposal?.kind === 'settings' && proposal.changedSettings?.includes('muted'); }
-function replyText(reply) { if (!reply) return ''; return [reply.content, reply.proposal?.title, ...(reply.proposal?.details || []), reply.proposal?.status === 'pending' ? 'Choose Approve or Cancel, or type or say a correction.' : '',reply.answerHint||''].filter(Boolean).join('. '); }
+function replyText(reply) { if (!reply) return ''; return [reply.content, reply.proposal?.title, ...(reply.proposal?.details || []), reply.proposal?.status === 'pending' ? 'Choose Approve or Cancel, or type or say a correction.' : '',reply.medicationCheckIn?.stage==='selection'?reply.medicationCheckIn.medications.map(m=>`${m.number}. ${m.title}`).join('. '):'',reply.answerHint||''].filter(Boolean).join('. '); }
 function receive(result, soundApproval = false) { if(activePage === 'Conversation') chatScroll.latest(); update(result.state); if (soundApproval && typeof state.settings?.muted === 'boolean') setMute(state.settings.muted); const text = replyText(result.reply); ui.announcer.textContent = text; speak(text); }
 async function act(id, decision) {
  if (busy) return; const generation = accountGeneration; const settingsApproval = decision === 'approve' && state.messages?.some(message => message.proposal?.id === id && changesSound(message.proposal)); setBusy(true); error(); stopHandsFree(); chatScroll.latest();
@@ -125,7 +128,7 @@ async function send(text = ui.message.value, responseToQuestion) {
  const pendingSettings = new Set((state.messages || []).filter(message => changesSound(message.proposal) && message.proposal.status === 'pending').map(message => message.proposal.id));
  stopHandsFree();
  switchPage('Conversation',{latest:true}); setBusy(true); error();
- try { const result = await api('/api/chat',{method:'POST',body:JSON.stringify({message:content || 'Help me record this photo.',...(responseToQuestion?{responseToQuestion}:{}),...(photo ? {photoId:photo.id} : {})})}); ui.message.value = ''; ui.message.style.height = ''; removePhoto({deleteRemote:false}); receive(result,state.messages?.some(message => pendingSettings.has(message.proposal?.id) && result.state.messages?.some(next => next.proposal?.id === message.proposal.id && next.proposal.status === 'approved'))); }
+ try { const result = await api('/api/chat',{method:'POST',body:JSON.stringify({message:content || 'Help me record this photo.',...(medicationCheckInUI.selectionContext()?{medicationSelection:medicationCheckInUI.selectionContext()}:{}),...(responseToQuestion?{responseToQuestion}:{}),...(photo ? {photoId:photo.id} : {})})}); ui.message.value = ''; ui.message.style.height = ''; removePhoto({deleteRemote:false}); receive(result,state.messages?.some(message => pendingSettings.has(message.proposal?.id) && result.state.messages?.some(next => next.proposal?.id === message.proposal.id && next.proposal.status === 'approved'))); }
  catch(e) { if(e.name !== 'AbortError') error(e.message); } finally { if(generation === accountGeneration) { setBusy(false); focusComposer(); resumeHandsFree(); } }
 }
 function speak(text) {
@@ -298,7 +301,7 @@ async function deleteSavedPhoto(id) { if(busy) return; const generation = accoun
 async function uploadPhoto(file) {
  if (!file) return; const generation = accountGeneration; error(); if (!['image/jpeg','image/png','image/webp'].includes(file.type)) { error('Choose a JPEG, PNG, or WebP photo.'); return; } if (file.size > 5 * 1024 * 1024) { error('This photo is too large. Please choose one under 5 MB.'); return; }
  removePhoto(); photoPreview = URL.createObjectURL(file); ui['attachment-image'].src = photoPreview; ui.attachment.hidden = false; ui['attachment-status'].textContent = 'Uploading photo…'; uploadBusy = true; ui['remove-photo'].disabled = true; setBusy(busy);
- try { const data = new FormData(); data.append('photo',file); photo = await api('/api/photos',{method:'POST',body:data}); ui['attachment-status'].textContent = 'Add a note, or send it as it is.'; }
+ try { const data = new FormData(); data.append('photo',file); photo = await api('/api/photos',{method:'POST',body:data}); ui['attachment-status'].textContent = photo.captureTime?`Camera time: ${photo.captureTime.localDateTime.replace('T',' ')}${photo.captureTime.offset?' ('+photo.captureTime.offset+')':' (timezone not included)'}. Add a correction if needed.`:'Capture time is not included in this photo. Add the time, or send it for review.'; }
  catch(e) { if(e.name !== 'AbortError') {removePhoto(); error(e.message);} } finally { if(generation === accountGeneration) {uploadBusy = false; ui['remove-photo'].disabled = false; setBusy(busy);} }
 }
 function resetRecording() { manualVoiceActive = false; recording = false; ui.composer.classList.remove('recording'); syncVoiceControl(); ui['recording-status'].textContent = ''; recordStream?.getTracks().forEach(track => track.stop()); recordStream = null; setBusy(busy); }
@@ -399,7 +402,7 @@ ui.account.addEventListener('click',async () => {
   try { await api('/api/session',{method:'DELETE'}); await window.sciappSignOut(); showWelcomeAfterSignOut(); } catch(e) {error(e.message);}
  } else if (config?.clerkPublishableKey) await window.sciappSignIn();
 });
-function clearAccountWork() { journalUI.reset(); closePhotoOptions(); chatScroll.reset(); notificationBusy = false; pushServerStatus = null; pushStatus = {supported:false,enabled:false,permission:'unknown'}; accountGeneration++; voiceGeneration++; pendingRequests.forEach(controller => controller.abort()); pendingRequests.clear(); clearTimeout(approvalTimer); stopHandsFree(); handsFreePaused = false; if(recognition) {recognition.onend = null; recognition.abort(); recognition = null;} if(recorder?.state === 'recording') recorder.stop(); recorder = null; audioChunks = []; recordStream?.getTracks().forEach(track => track.stop()); resetRecording(); assistantSpeaking = false; window.speechSynthesis?.cancel(); uploadBusy = false; setBusy(false); revokeHistoricalPhotos(); removePhoto({deleteRemote:false}); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; ui.announcer.textContent = ''; ui.app.hidden = true; ui.welcome.hidden = false; switchPage('Conversation'); }
+function clearAccountWork() { journalUI.reset();medicationCheckInUI.reset(); closePhotoOptions(); chatScroll.reset(); notificationBusy = false; pushServerStatus = null; pushStatus = {supported:false,enabled:false,permission:'unknown'}; accountGeneration++; voiceGeneration++; pendingRequests.forEach(controller => controller.abort()); pendingRequests.clear(); clearTimeout(approvalTimer); stopHandsFree(); handsFreePaused = false; if(recognition) {recognition.onend = null; recognition.abort(); recognition = null;} if(recorder?.state === 'recording') recorder.stop(); recorder = null; audioChunks = []; recordStream?.getTracks().forEach(track => track.stop()); resetRecording(); assistantSpeaking = false; window.speechSynthesis?.cancel(); uploadBusy = false; setBusy(false); revokeHistoricalPhotos(); removePhoto({deleteRemote:false}); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; ui.announcer.textContent = ''; ui.app.hidden = true; ui.welcome.hidden = false; switchPage('Conversation'); }
 function showWelcomeAfterSignOut() {
  clearAccountWork(); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; window.speechSynthesis?.cancel(); ui.app.hidden = true; ui.welcome.hidden = false; ui.account.hidden = true;
 }
@@ -425,12 +428,9 @@ function appendCareCheckIn(parent){
  card.append(node('h3','','Your care check-in'),node('p','',`As of ${agenda.localNow} (${agenda.timezone})`));
  if(agenda.next)card.append(node('p','',`Next: ${agenda.next.title} at ${formatTime(agenda.next.dueAt)}`));
  const due=agenda.overdue.filter(t=>!state.reminderSnoozes?.[t.id]||Date.parse(state.reminderSnoozes[t.id])<=Date.now());
- if(due.length)card.append(node('p','','These scheduled items have no confirmed record. Did you complete any of them?'));
- for(const task of due){const row=node('div','care-due');row.append(node('p','',`${task.title} · ${formatTime(task.dueAt)}`));
- if(task.kind==='medication'){
- row.append(button('I took this dose','secondary',()=>{const d=node('dialog','journal-dialog');d.append(node('h2','','When did you take it?'),node('p','',task.title));for(const [label,timing]of [['At the scheduled time','scheduled'],['Just now','now']])d.append(button(label,'primary',()=>{d.close();d.remove();reviewReminder(task,timing);}));d.append(button('Another time','secondary',()=>{d.close();d.remove();send(`I took ${task.title}, scheduled for ${task.dueAt}, at a different time. Ask me when.`);}));d.append(button('Cancel','secondary',()=>{d.close();d.remove();}));d.addEventListener('close',()=>d.remove(),{once:true});document.body.append(d);d.showModal();}));
- row.append(button('Ask again in 30 minutes','secondary',async()=>{try{const r=await api('/api/reminders/snooze',{method:'POST',body:JSON.stringify({occurrenceId:task.id})});update(r.state);}catch(e){error(e.message);}}));
- }else row.append(chatButton('Record this catheterization',`Help me record catheterization scheduled for ${task.dueAt}. Ask whether I did it and the volume.`));card.append(row);}
+ if(due.length&&!state.messages.at(-1)?.medicationCheckIn)card.append(node('p','','These scheduled items have no confirmed record. Did you complete any of them?'));
+ for(const group of state.messages.at(-1)?.medicationCheckIn||state.messages.some(m=>m.proposal?.kind==='medicationBatch'&&m.proposal.status==='pending'&&Date.parse(m.proposal.expiresAt)>Date.now())?[]:agenda.medicationGroups||[]){if(group.medications.some(m=>due.some(t=>t.id===m.occurrenceId)))medicationCheckInUI.group(card,group);}
+ for(const task of due.filter(t=>t.kind!=='medication')){const row=node('div','care-due');row.append(node('p','',`${task.title} · ${formatTime(task.dueAt)}`),chatButton('Record this catheterization',`Help me record catheterization scheduled for ${task.dueAt}. Ask whether I did it and the volume.`));card.append(row);}
  if(agenda.unscheduledMedications.length)card.append(node('p','',`No reminder times: ${agenda.unscheduledMedications.map(m=>m.name).join(', ')}. Tell me the times to add them.`));
  if(window.Clerk?.session&&!pushStatus.enabled)card.append(node('p','','This browser is not connected for notifications. Chat check-ins still work.'),button('Enable notifications on this device','primary',()=>notificationAction('enable')));
  card.append(node('p','answer-hint','Choose a button, or type or say anything else. A missing record does not mean a dose was missed.'));
@@ -438,4 +438,12 @@ function appendCareCheckIn(parent){
  parent.append(card);
 }
 async function reviewReminder(task,timing){if(busy)return;const generation=accountGeneration;setBusy(true);stopHandsFree();try{receive(await api('/api/reminders/review',{method:'POST',body:JSON.stringify({occurrenceId:task.id,timing})}));}catch(e){error(e.message);}finally{if(generation===accountGeneration){setBusy(false);resumeHandsFree();}}}
-setInterval(async()=>{if(!state||busy||uploadBusy||recording||document.visibilityState!=='visible'||!['Conversation','Today'].includes(activePage)||ui.message.value.trim())return;try{const next=await api('/api/state');if(!busy&&!uploadBusy&&!recording&&['Conversation','Today'].includes(activePage)&&!ui.message.value.trim()&&!document.querySelector('dialog[open]'))update(next);}catch{}},60000);
+setInterval(async()=>{if(!state||busy||uploadBusy||recording||document.visibilityState!=='visible'||!['Conversation','Today'].includes(activePage)||ui.message.value.trim()||state.messages.at(-1)?.medicationCheckIn||state.messages.at(-1)?.proposal?.status==='pending')return;try{const next=await api('/api/state');if(!busy&&!uploadBusy&&!recording&&['Conversation','Today'].includes(activePage)&&!ui.message.value.trim()&&!document.querySelector('dialog[open]')&&!state.messages.at(-1)?.medicationCheckIn&&state.messages.at(-1)?.proposal?.status!=='pending')update(next);}catch{}},60000);
+
+async function runMedicationCheckIn(action,data={}){
+ if(busy||uploadBusy||recording)return;
+ const generation=accountGeneration;switchPage('Conversation',{latest:true});setBusy(true);error();stopHandsFree();
+ try{receive(await api('/api/medication-checkin',{method:'POST',body:JSON.stringify({action,...data})}));}
+ catch(e){if(e.name!=='AbortError')error(e.message);}
+ finally{if(generation===accountGeneration){setBusy(false);focusComposer();resumeHandsFree();}}
+}

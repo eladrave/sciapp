@@ -1,3 +1,5 @@
+import {extractPhotoCaptureTime,resolvePhotoCaptureTime} from './photo-metadata.js';
+import {medicationCheckInAction,applyMedicationSelectionDraft} from './medication-checkin.js';
 import {journalQuery} from './journal.js';
 import { questionChoices } from '../web/question-choices.js';
 import { runCareAgent } from './care-orchestrator.js';
@@ -87,7 +89,7 @@ export default {
       if (!configuredOrigins(env,url.origin).includes(url.origin))return json({error:'This hostname is not configured for SCIapp.'},421);
       const canonical=canonicalHome(request,env);
       if(canonical)return new Response(null,{status:302,headers:{...security,Location:canonical}});
-      if (path === '/api/health') {const {settings}=await aiConfiguration(env);return json({ status:'ok',version:'0.10.0',chatModel:settings.provider==='openai'?settings.chatModel:CHAT_MODEL,visionModel:settings.provider==='openai'?settings.visionModel:VISION_MODEL,provider:settings.provider,mode:'personal-beta' });}
+      if (path === '/api/health') {const {settings}=await aiConfiguration(env);return json({ status:'ok',version:'0.11.0',chatModel:settings.provider==='openai'?settings.chatModel:CHAT_MODEL,visionModel:settings.provider==='openai'?settings.visionModel:VISION_MODEL,provider:settings.provider,mode:'personal-beta' });}
       if (path === '/api/config' && request.method === 'GET') return json({ appOrigin:env.APP_ORIGIN||url.origin, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null, authEnvironment: env.CLERK_PUBLISHABLE_KEY?.startsWith('pk_live_') ? 'production' : 'development', pushPublicKey:env.VAPID_PUBLIC_KEY||null, mode: env.CLERK_PUBLISHABLE_KEY ? 'authenticated' : 'preview', features: { notifications: !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY), memory:retrievalReady(env), resources:retrievalReady(env), medications:true, photos: true, transcription: !!env.AI, speech: false, caregivers: 'drafts', healthSystems:!!env.HEALTH_TOKEN_KEY, healthConnect: false }, notice: 'Personal care beta. Medication and allergy records are user-entered. Notifications are reminders, not guaranteed clinical alarms. Caregiver invitations remain drafts.' });
       if (!path.startsWith('/api/')) {
         if (!['GET','HEAD'].includes(request.method)) return json({ error: 'Method not allowed.' },405);
@@ -108,13 +110,14 @@ export default {
         await env.DB.prepare('INSERT INTO sessions(token_hash,account_id,expires_at) VALUES (?,?,?)').bind(await hash(token),id,Date.now()+7*86400000).run();
         return json({ state: publicState((await load(env,id)).state) },200,{ 'Set-Cookie': `__Host-sciapp=${token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=604800` });
       }
-      if(path.startsWith('/api/admin/'))return await adminRoute(request,env,ctx,{json,bodyJSON:r=>bodyJSON(r,600000),form,version:'0.10.0'});
+      if(path.startsWith('/api/admin/'))return await adminRoute(request,env,ctx,{json,bodyJSON:r=>bodyJSON(r,600000),form,version:'0.11.0'});
       if(path==='/api/health-systems/callback'&&request.method==='GET'){
         if(!env.HEALTH_TOKEN_KEY)throw new AppError('Health connections are not configured.',503);
         const result=await completeConnection(env,request);return new Response(null,{status:303,headers:{...security,Location:env.APP_ORIGIN+'/?health='+(result.cancelled?'cancelled':'connected'),'Set-Cookie':result.cookie}});
       }
       const id = await user(request, env);
       if(path.startsWith('/api/health-systems/')){if(!env.HEALTH_TOKEN_KEY)throw new AppError('Health connections are not configured.',503);await limit(request,env,'health-systems',300);return await healthRoute(request,env,id,{json,bodyJSON,ctx});}
+      if(path==='/api/medication-checkin'&&request.method==='POST'){const data=await bodyJSON(request);if(!['all','some','select','time','later','cancel'].includes(data.action))throw new AppError('Choose a medication check-in action.');if(['select','time'].includes(data.action)&&(!data.checkInId||!Number.isInteger(data.revision)))throw new AppError('Use the current medication question.',409);if(data.time||data.timeRef||data.timing&& !['scheduled','now'].includes(data.timing))throw new AppError('Tell the companion a different actual time, or choose a suggested time.');return json(await mutate(env,id,state=>{const reply=medicationCheckInAction(state,data);state.messages.push(message('user',({all:'Took them all',some:'Took only some',select:'These are the medicines I took',time:data.timing==='scheduled'?'On time':'Just now',later:'Not yet, ask again later',cancel:'Cancel medication check-in'})[data.action]));return reply;}));}
       if(path==='/api/reminders/review'&&request.method==='POST'){const data=await bodyJSON(request);if(!['scheduled','now'].includes(data.timing))throw new AppError('Choose when you took the dose.');return json(await mutate(env,id,state=>{const task=reminderTasks(state).find(t=>t.id===data.occurrenceId&&t.kind==='medication'&&Date.parse(t.dueAt)<=Date.now());if(!task)throw new AppError('This dose is no longer awaiting a record. Refresh your tasks.',409);return proposal(state,'medication',{medicationId:task.medicationId,scheduledFor:task.dueAt,time:data.timing==='scheduled'?task.dueAt:now()});}));}
       if(path==='/api/reminders/snooze'&&request.method==='POST'){const data=await bodyJSON(request);return json(await mutate(env,id,state=>{const task=reminderTasks(state).find(t=>t.id===data.occurrenceId&&Date.parse(t.dueAt)<=Date.now());if(!task)throw new AppError('This reminder is no longer due.',409);state.reminderSnoozes=Object.fromEntries(Object.entries(state.reminderSnoozes||{}).filter(([,v])=>Date.parse(v)>Date.now()));state.reminderSnoozes[task.id]=new Date(Date.now()+1800000).toISOString();return message('assistant','I will show this check-in again in 30 minutes while the app is open, or when you next return. No dose was recorded.');}));}
       if(path==='/api/journal'&&request.method==='POST')return json(journalQuery((await load(env,id)).state,await bodyJSON(request)));
@@ -157,10 +160,11 @@ export default {
         const data=await bodyJSON(request); const text=typeof data.message==='string'?data.message.trim():'';
         if ((!text && !data.photoId) || text.length>3000) throw new AppError('Enter a message up to 3,000 characters.');
         const {state,version}=await load(env,id);
+        if(data.medicationSelection)applyMedicationSelectionDraft(state,data.medicationSelection);
         if(data.responseToQuestion){const latest=[...state.messages].reverse().find(m=>m.role==='assistant');if(typeof data.responseToQuestion!=='string'||questionChoices(latest||{}).reference!==data.responseToQuestion)throw new AppError('That question has changed. Use the latest answer buttons, or type or speak your answer.',409);}
         let photoData=null;
         if(data.photoId) { attachmentOwner(state,data.photoId); await limit(request,env,'ai',60); const file=await env.PHOTOS.get(`${id}/${data.photoId}`); if(!file)throw new AppError('Photo no longer available.',404); try{photoData=await analyzePhoto(env,file,text);}catch{console.warn(JSON.stringify({event:'photo_interpretation_failed',model:VISION_MODEL}));photoData={type:'other',notes:'The image-processing service did not complete. Your photo is saved; please retry or enter the reading.'};} }
-        if(data.photoId){const metadata=state.photos.find(p=>p.id===data.photoId);metadata.analysis=photoData;metadata.userText=text;metadata.analyzedAt=now();}
+        if(data.photoId){const metadata=state.photos.find(p=>p.id===data.photoId);if(!Object.hasOwn(metadata,'captureTime')){const original=await env.PHOTOS.get(`${id}/${data.photoId}`);if(original)metadata.captureTime=extractPhotoCaptureTime(new Uint8Array(await original.arrayBuffer()));}photoData={...photoData,captureTime:resolvePhotoCaptureTime(metadata.captureTime,state.settings.timezone||'UTC')};metadata.analysis=photoData;metadata.userText=text;metadata.analyzedAt=now();}
         const userMessage=message('user',text||'Photo attached',data.photoId?{photoId:data.photoId,photoUrl:`/api/photos/${data.photoId}`}:{ });
         state.messages.push(userMessage);
         let reply;
@@ -186,9 +190,9 @@ export default {
         const bytes=new Uint8Array(await file.arrayBuffer());
         const valid=(file.type==='image/jpeg'&&bytes[0]===255&&bytes[1]===216)||(file.type==='image/png'&&bytes[0]===137&&bytes[1]===80&&bytes[2]===78&&bytes[3]===71)||(file.type==='image/webp'&&new TextDecoder().decode(bytes.slice(0,4))==='RIFF'&&new TextDecoder().decode(bytes.slice(8,12))==='WEBP');
         if(!valid)throw new AppError('The file does not match its image type.');
-        const photoId=uid(); await env.PHOTOS.put(`${id}/${photoId}`,bytes,{httpMetadata:{contentType:file.type}});
-        try { for(let attempt=0;attempt<4;attempt++){const {state,version}=await load(env,id);if(!id.startsWith('clerk:')&&state.photos.length>=100)throw new AppError('Preview photo storage is full. Sign in for your personal journal.',409);state.photos.push({id:photoId,type:file.type,byteSize:file.size,createdAt:now()});try{await store(env,id,state,version);break;}catch(e){if(e.status!==409||attempt===3)throw e;}} } catch(e){await env.PHOTOS.delete(`${id}/${photoId}`);throw e;}
-        return json({id:photoId,url:`/api/photos/${photoId}`});
+        const captureTime=extractPhotoCaptureTime(bytes);const photoId=uid(); await env.PHOTOS.put(`${id}/${photoId}`,bytes,{httpMetadata:{contentType:file.type}});
+        try { for(let attempt=0;attempt<4;attempt++){const {state,version}=await load(env,id);if(!id.startsWith('clerk:')&&state.photos.length>=100)throw new AppError('Preview photo storage is full. Sign in for your personal journal.',409);state.photos.push({id:photoId,type:file.type,byteSize:file.size,captureTime,createdAt:now()});try{await store(env,id,state,version);break;}catch(e){if(e.status!==409||attempt===3)throw e;}} } catch(e){await env.PHOTOS.delete(`${id}/${photoId}`);throw e;}
+        return json({id:photoId,url:`/api/photos/${photoId}`,captureTime});
       }
       const photo=path.match(/^\/api\/photos\/([a-f0-9-]+)$/);
       if(photo) {

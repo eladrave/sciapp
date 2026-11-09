@@ -1,5 +1,6 @@
 export const answerHint='Choose a button, or type or say any other answer.';
 export function questionChoices(message){
+ if(message.medicationCheckIn)return {choices:[],reference:message.questionId||null,hint:answerHint};
  if(message.role!=='assistant')return {choices:[],reference:null};
  const content=message.content||'';const isQuestion=!!message.questionId||content.includes('?')||/reply.*yes|type.*yes/i.test(content);
  const reference=message.questionId||(isQuestion&&message.id?'legacy:'+message.id:null);

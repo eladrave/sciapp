@@ -1,12 +1,24 @@
-# Care journal and local-time reminders (0.10.0)
+# Care journal and local-time reminders (0.11.0)
 
 ## Reminder behavior
 
 The backend compares UTC instants, then formats clocks in the account IANA timezone. `careAgenda` returns the local clock, today's unconfirmed occurrences, the next future task, and active routine medications without explicit times. At 09:30 in America/New_York on November 9, 2026, the 11:30 catheter task is upcoming. Notification permission does not gate the agenda or in-chat check-ins.
 
-`get_care_agenda` returns the authoritative schedule reply directly. The model selects the tool from ordinary language; it does not have to infer task status by comparing UTC clock strings with local HH:mm values. The UI shows a check-in after messages and refreshes it each minute while the conversation or Today page is visible and idle. Refreshes do not interrupt the journal, draft text, settings, or an open dialog.
+`get_care_agenda` returns the authoritative schedule reply directly. The model selects the tool from ordinary language; it does not have to infer task status by comparing UTC clock strings with local HH:mm values. The UI shows a check-in after messages and refreshes it each minute while the conversation or Today page is visible and idle. Refreshes do not interrupt the journal, draft text, settings, an open dialog, an active medication selection, or a pending care review.
 
-Medication occurrences have distinct IDs. A due dose offers a choice of actual time (scheduled time, now, or another time), then a review. Approval records the actual time and `scheduledFor` separately and suppresses that occurrence. Unknown stock consumption units do not block recording a reported dose; the review explicitly leaves stock unchanged. Reminders never establish dose completion or recommend catch-up doses. The 30-minute chat snooze stores a reminder preference, not a dose record, and requires an open page or subsequent return to show again. PRN medications have no routine reminders.
+Medication occurrences have distinct IDs and are grouped by their scheduled local time. Each group lists its medicines with three actions: Took them all, Took only some, and Not yet. All asks the actual time once. Some provides large checkboxes, then asks one shared actual time. One concrete review covers the whole group. Approval records each actual time and `scheduledFor` separately and suppresses only the taken occurrences. Unselected medicines are explicitly reviewed and recorded as not taken yet, remain unconfirmed, and their chat check-in returns after 30 minutes. All rows and stock settings are validated before any group writes; approval replay is idempotent. Individual records support correction/undo. Unknown stock consumption units do not block recording a reported dose; the review explicitly leaves stock unchanged. Reminders never establish dose completion or recommend catch-up doses. The 30-minute chat snooze stores a reminder preference, not a dose record, and requires an open page or subsequent return to show again. PRN medications have no routine reminders.
+
+## Accessibility and voice
+
+Minimal required hand movement is a product requirement recorded in `AGENTS.md`, not an optional UI setting. Ask one essential question at a time and reuse already supplied facts. Use short contextual suggestions and large controls; support voice/text for the same actions. Grouped check-ins use one timing question and one approval instead of repeating them for every medicine.
+
+The native `medication_checkin` tool and `POST /api/medication-checkin` share a bounded, account-owned workflow. Its state expires after 30 minutes. UI answers carry a check-in ID and revision so old buttons cannot change a later question. Ordinary speech can report all, some, named medicines, numbered selections, or all except a medicine. If a time is already provided, the tool resolves it and proceeds directly to a review. Touch and voice do not require the user to repeat the same facts in different formats. Unsaved checkbox drafts survive re-renders; later voice/text turns include the current selection as validated conversation context. The server checks its workflow ID, revision and owned medicine IDs before using it. Drafts never record care or change stock. Different actual times must not be collapsed into an invented shared time.
+
+## Photo capture time
+
+JPEG EXIF APP1, PNG eXIf and WebP EXIF can supply `DateTimeOriginal` and `OffsetTimeOriginal`. The bounded parser reads only those time fields and their EXIF directory pointer; it does not extract GPS data. Original image bytes remain intact. Missing or damaged metadata returns no capture time. Metadata is editable and a camera clock may be wrong, so the review always labels its source and asks the user to verify it.
+
+A valid camera offset produces an absolute capture timestamp. Without an offset, the account timezone is an explicit assumption, re-evaluated if that timezone changes. Future camera timestamps are not automatically usable. `resolve_care_time` supports `photo_capture` and returns an opaque time reference plus its caveat. An explicit user correction takes priority. The app retains original capture time, upload time and the approved care observation time separately. Screenshots and messaging apps may omit original capture metadata; upload time must never stand in as proof of capture time.
 
 ## Push notifications
 
@@ -28,12 +40,16 @@ History provides category/date filters, original image viewing, comparison of up
 
 ## Validation
 
-- 104 automated tests passed, plus JavaScript syntax checks, build, and whitespace checks.
+- 115 automated tests passed, plus JavaScript syntax checks, build, and whitespace checks.
 - Coverage includes the exact 09:30 / 11:30 regression, medication occurrence matching independent of push permission, local-date retrieval across UTC midnight, 70-record pagination, account isolation, retained original references, correction visibility, and approved timed observations.
 - Live Remote Browser used an isolated signed-in test account, synthetic records, actual R2 uploads, the configured AI provider, actual APIs, approval and persistence.
 - Verified native AI requests for What's next, yesterday's BP, last three catheter images, and a reviewed color/cloudiness note with its original image and observation time.
 - Verified mobile gallery, original images, three-image comparison, no horizontal overflow, and a printable self-contained report with three embedded original PNG images. Remote Browser did not expose a download completion event; the report opened and its complete embedded content was inspected.
 - Verified real Web Push registration, provider acceptance, visible browser notification, and a separate medication occurrence delivered by the minute cron with one accepted attempt.
+- Live v0.11.0 checks verified the grouped all and partial touch flows at text scale 1.5, one group approval, independent stock changes, and unconfirmed/not-yet status for unselected medicines. Mobile selection labels were at least 109 CSS pixels high and the page had no horizontal overflow.
+- A hands-free test injected only SpeechRecognition hardware events. Actual AI, APIs, reviews and persistence processed “all except Synthetic Beta”, “just now”, and “approve”, recording two doses and leaving the third not taken yet. This verifies the hands-free application path; physical microphone accuracy still needs device testing.
+- Live mixed-input validation checked a medicine, invoked the refresh timer and a focus refresh, then sent “add Synthetic Beta too”. The selection survived, reached the real model as validated draft context, and the model retained both medicines. Cancelling the setup cleared that context.
+- A valid synthetic JPEG uploaded today carried yesterday's original camera timestamp. The real vision model read 118/76 with pulse 65; the review used the camera time, and a subsequent ordinary-language correction changed the care occurrence to 8 AM while retaining the 7 AM original capture time and today's upload time.
 - Physical Android permission and notification receipt still require a test on that phone. No claim of physical Android validation is made.
 
 ## Storage boundary

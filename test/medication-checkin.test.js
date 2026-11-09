@@ -1,0 +1,36 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {initialState,finishProposal,undoEvent} from '../worker/domain.js';
+import {careAgenda} from '../worker/reminders.js';
+import {medicationCheckInAction,applyMedicationSelectionDraft} from '../worker/medication-checkin.js';
+import {runCareAgent} from '../worker/care-orchestrator.js';
+const at=Date.parse('2026-11-09T15:00:00Z');
+function state(){const s=initialState({real:true});s.settings.timezone='America/New_York';s.medications=['Alpha','Beta','Gamma'].map((name,i)=>({id:name.toLowerCase(),name,dosage:'5 mg',frequency:'twice daily',times:['08:30','21:30'],active:true,asNeeded:false,unit:'tablets',unitsConfigured:true,unitsPerDose:1,stock:10,createdAt:'2026-11-08T00:00:00Z',scheduleUpdatedAt:'2026-11-08T00:00:00Z'}));return s;}
+async function frozen(fn){const old=Date.now;Date.now=()=>at;try{return await fn();}finally{Date.now=old;}}
+test('one group covers the due time; all uses one timing question and one idempotent approval',()=>frozen(()=>{
+ const s=state(),group=careAgenda(s).medicationGroups[0];assert.equal(group.clock,'8:30 AM');assert.equal(group.medications.length,3);
+ let r=medicationCheckInAction(s,{action:'all',groupId:group.id});assert.equal(r.medicationCheckIn.stage,'time');assert.equal(s.events.length,0);
+ r=medicationCheckInAction(s,{action:'time',checkInId:r.medicationCheckIn.id,revision:r.medicationCheckIn.revision,timing:'scheduled'});assert.equal(r.proposal.kind,'medicationBatch');assert.equal(s.events.length,0);assert.deepEqual(s.medications.map(m=>m.stock),[10,10,10]);
+ finishProposal(s,r.proposal.id,'approve');assert.equal(s.events.length,3);assert.deepEqual(s.medications.map(m=>m.stock),[9,9,9]);assert.ok(s.events.every(e=>e.occurredAt==='2026-11-09T13:30:00.000Z'&&e.data.scheduledFor===e.occurredAt));assert.equal(careAgenda(s).medicationGroups.length,0);
+ finishProposal(s,r.proposal.id,'approve');assert.equal(s.events.length,3);assert.deepEqual(s.medications.map(m=>m.stock),[9,9,9]);undoEvent(s,s.events[0].id);assert.equal(careAgenda(s).medicationGroups[0].medications.length,1);assert.equal(s.medications[0].stock,10);
+}));
+test('partial group logs only selected medicines as taken and leaves not-yet doses unconfirmed with a snooze',()=>frozen(()=>{
+ const s=state();let r=medicationCheckInAction(s,{action:'some'});assert.equal(r.medicationCheckIn.stage,'selection');assert.equal(r.medicationCheckIn.medications[2].number,3);
+ const old={checkInId:r.medicationCheckIn.id,revision:r.medicationCheckIn.revision};r=medicationCheckInAction(s,{action:'select',...old,takenMedicationIds:['alpha','gamma']});assert.throws(()=>medicationCheckInAction(s,{action:'select',...old,takenMedicationIds:['beta']}),/question changed/);
+ r=medicationCheckInAction(s,{action:'time',timing:'now'});assert.ok(r.proposal.details.some(t=>t.includes('Not taken yet: Beta')));finishProposal(s,r.proposal.id,'approve');
+ assert.deepEqual(s.medications.map(m=>m.stock),[9,10,9]);assert.equal(s.events.filter(e=>e.kind==='medication').length,2);assert.equal(s.events.find(e=>e.kind==='medicationStatus').data.status,'not_taken_yet');const due=careAgenda(s).medicationGroups[0];assert.equal(due.medications[0].medicationId,'beta');assert.ok(Date.parse(s.reminderSnoozes[due.medications[0].occurrenceId])>at);
+}));
+test('group approval validates all rows before writes, rejects concurrent changes, and cancel leaves stock intact',()=>frozen(()=>{
+ const s=state();let r=medicationCheckInAction(s,{action:'all'});r=medicationCheckInAction(s,{action:'time',timing:'scheduled'});s.medications[2].stock=0;
+ assert.throws(()=>finishProposal(s,r.proposal.id,'approve'),/not enough stock/);assert.equal(s.events.length,0);assert.deepEqual(s.medications.map(m=>m.stock),[10,10,0]);s.medications[2].stock=10;s.medications[0].dosage='10 mg';assert.throws(()=>finishProposal(s,r.proposal.id,'approve'),/changed/);assert.equal(s.events.length,0);finishProposal(s,r.proposal.id,'cancel');assert.deepEqual(s.medications.map(m=>m.stock),[10,10,10]);
+}));
+test('foreign selection, expired check-in and ambiguous schedule are rejected; PRN is excluded',()=>frozen(()=>{
+ const s=state();s.medications.push({...s.medications[0],id:'prn',asNeeded:true});assert.equal(careAgenda(s).medicationGroups[0].medications.length,3);medicationCheckInAction(s,{action:'some'});assert.throws(()=>medicationCheckInAction(s,{action:'select',takenMedicationIds:['other-account']}));assert.throws(()=>medicationCheckInAction(s,{action:'select',takenMedicationIds:['alpha','alpha']}));s.medicationCheckIn.expiresAt='2026-11-08T00:00:00Z';assert.throws(()=>medicationCheckInAction(s,{action:'time',timing:'scheduled'}),/expired/);s.medications[0].times.push('09:30');delete s.medicationCheckIn;assert.throws(()=>medicationCheckInAction(s,{action:'all'}),/More than one/);
+}));
+test('native voice tools handle all except a medicine and an already supplied time without another timing question',()=>frozen(async()=>{
+ const s=state(),text='The 8:30 medicines, all except Beta. I took them at 9.';let calls=0;
+ const r=await runCareAgent({},'synthetic',s,text,{},async(_e,_s,_t,c)=>{calls++;if(calls===1)return {kind:'tool',tool:{name:'resolve_care_time',arguments:{strategy:'explicit_clock',clock:'09:00',date:'2026-11-09'}}};return {kind:'tool',tool:{name:'medication_checkin',arguments:{action:'some',takenMedicationIds:['alpha','gamma'],timeRef:JSON.parse(c.toolTrace.at(-1).content).timeRef,evidenceQuote:text}}};});
+ assert.equal(calls,2);assert.equal(r.proposal.kind,'medicationBatch');assert.equal(s.proposals.at(-1).params.time,'2026-11-09T14:00:00.000Z');assert.deepEqual(s.proposals.at(-1).params.notTakenMedicationIds,['beta']);assert.equal(s.events.length,0);
+}));
+
+test('a checkbox draft can inform a later spoken selection without recording care or changing stock',()=>frozen(()=>{const s=state();const r=medicationCheckInAction(s,{action:'some'}),c=r.medicationCheckIn;applyMedicationSelectionDraft(s,{checkInId:c.id,revision:c.revision,takenMedicationIds:['alpha']});assert.deepEqual(s.medicationCheckIn.takenMedicationIds,['alpha']);assert.equal(s.events.length,0);assert.deepEqual(s.medications.map(m=>m.stock),[10,10,10]);assert.throws(()=>applyMedicationSelectionDraft(s,{checkInId:c.id,revision:c.revision,takenMedicationIds:['another-account']}));const next=medicationCheckInAction(s,{action:'select',takenMedicationIds:['alpha','beta']});assert.equal(next.medicationCheckIn.stage,'time');assert.throws(()=>applyMedicationSelectionDraft(s,{checkInId:c.id,revision:c.revision,takenMedicationIds:['gamma']}),/changed/);}));

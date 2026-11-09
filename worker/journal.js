@@ -3,7 +3,7 @@ import {zonedTime} from './reminders.js';
 const categories=['all','catheter','vitals','medication','supplies','note','other'];
 export function localDay(at,timezone){return new Intl.DateTimeFormat('en-CA',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(at));}
 function dateValue(date){if(typeof date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(Date.parse(date+'T00:00:00Z'))||new Date(date+'T00:00:00Z').toISOString().slice(0,10)!==date)throw new AppError('Choose a valid journal date.');return date;}
-const category=kind=>({catheterization:'catheter',bag:'catheter',monitor:'vitals',vitals:'vitals',medStock:'medication',medication:'medication',supplies:'supplies',journalNote:'note',medicationBatch:'medication'}[kind]||'other');
+const category=kind=>({catheterization:'catheter',bag:'catheter',monitor:'vitals',vitals:'vitals',medStock:'medication',medication:'medication',medicationStatus:'medication',supplies:'supplies',journalNote:'note',medicationBatch:'medication'}[kind]||'other');
 export function journalQuery(state,options={},at=Date.now()){
  const timezone=state.settings.timezone||'UTC',today=localDay(at,timezone);
  let {startDate,endDate,relativeDate,category:filter='all',photosOnly=false,includeVoided=false,cursor,limit=20}=options;

@@ -107,3 +107,5 @@ Version 0.9.1 adds selectable clarification answers with free-form typing/speech
 Version 0.9.2 restores follow-up and clarification button availability after requests finish, including hands-free mode. Stale question answers remain disabled.
 
 Version 0.10.0 adds a searchable care journal with original images, local-date history, three-image comparison, user observations, and printable doctor reports. Server-computed local agendas and accessible medication check-ins separate upcoming care from unconfirmed earlier items. Push registration repair and Worker delivery were verified with a real isolated browser account. See [journal and reminders](docs/journal-and-reminders.md) for behavior, validation, and storage boundaries.
+
+Version 0.11.0 groups medication check-ins by scheduled time, supports all/some and spoken names or numbers, and records selected doses through one review. Original photo capture timestamps can prefill reviewed care times with clear timezone assumptions. Accessibility requirements are recorded in AGENTS.md. See [journal and reminders](docs/journal-and-reminders.md).

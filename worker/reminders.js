@@ -63,5 +63,15 @@ export function careAgenda(state,at=Date.now()) {
  const tasks=reminderTasks(state,at).map(t=>({...t,localTime:label(t.dueAt),status:Date.parse(t.dueAt)<=at?'unconfirmed':'upcoming'}));
  const overdue=tasks.filter(t=>t.status==='unconfirmed'&&`${localParts(Date.parse(t.dueAt),timezone).year}-${localParts(Date.parse(t.dueAt),timezone).month}-${localParts(Date.parse(t.dueAt),timezone).day}`===localDate);
  const next=tasks.find(t=>t.status==='upcoming')||null;
- return {now:new Date(at).toISOString(),localNow:label(at),localDate,timezone,overdue,next,tasks,unscheduledMedications:(state.medications||[]).filter(m=>m.active!==false&&!m.asNeeded&&!m.times?.length).map(m=>({id:m.id,name:m.name}))};
+ return {now:new Date(at).toISOString(),localNow:label(at),localDate,timezone,overdue,next,tasks,medicationGroups:groupMedicationTasks(overdue,timezone),unscheduledMedications:(state.medications||[]).filter(m=>m.active!==false&&!m.asNeeded&&!m.times?.length).map(m=>({id:m.id,name:m.name}))};
+}
+
+export function groupMedicationTasks(tasks,timezone='UTC') {
+ const groups=new Map();
+ for(const task of tasks.filter(t=>t.kind==='medication')){
+  let group=groups.get(task.dueAt);
+  if(!group){group={id:`medication-group:${task.dueAt}`,scheduledFor:task.dueAt,clock:new Intl.DateTimeFormat('en-US',{timeZone:timezone,hour:'numeric',minute:'2-digit'}).format(new Date(task.dueAt)),localTime:new Intl.DateTimeFormat('en-US',{timeZone:timezone,dateStyle:'medium',timeStyle:'short'}).format(new Date(task.dueAt)),medications:[]};groups.set(task.dueAt,group);}
+  group.medications.push({occurrenceId:task.id,medicationId:task.medicationId,title:task.title});
+ }
+ return [...groups.values()];
 }

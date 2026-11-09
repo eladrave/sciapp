@@ -30,5 +30,20 @@ test('Worker integration: private sessions, approval concurrency, persistence, u
   const journalA=await(await req('/api/journal','POST',{photosOnly:true},a)).json();assert.equal(journalA.entries[0].photoId,photo.id);assert.equal(journalA.entries[0].status,'unreviewed');assert.equal((await(await req('/api/journal','POST',{photosOnly:true},b)).json()).total,0);assert.equal((await req('/api/journal','POST',{limit:1000},a)).status,400);
   assert.equal((await req(photo.url,'GET',null,b)).status,404);assert.equal((await req(photo.url,'GET',null,a)).status,200);
   assert.equal((await req(photo.url,'DELETE',null,a)).status,200);assert.equal((await req(photo.url,'GET',null,a)).status,404);
+  // A medication group is scoped to its account and saved atomically once.
+  const rawToken=a.slice(a.indexOf('=')+1),tokenHash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(rawToken))),n=>n.toString(16).padStart(2,'0')).join('');
+  const owner=(await db.prepare('SELECT account_id FROM sessions WHERE token_hash=?').bind(tokenHash).first()).account_id;
+  const row=await db.prepare('SELECT state FROM accounts WHERE id=?').bind(owner).first(),fixture=JSON.parse(row.state);
+  fixture.medications=['Sample A','Sample B'].map((name,i)=>({id:'group-med-'+i,name,dosage:'5 mg',active:true,times:['00:00'],asNeeded:false,stock:5,unit:'tablets',unitsConfigured:true,unitsPerDose:1,createdAt:'1970-01-01T00:00:00Z',scheduleUpdatedAt:'1970-01-01T00:00:00Z'}));
+  await db.prepare('UPDATE accounts SET state=?,version=version+1 WHERE id=?').bind(JSON.stringify(fixture),owner).run();
+  const before=await(await req('/api/state','GET',null,a)).json(),group=before.agenda.medicationGroups[0];
+  const all=await(await req('/api/medication-checkin','POST',{action:'all',groupId:group.id},a)).json();assert.equal(all.reply.medicationCheckIn.stage,'time');
+  const timing={action:'time',timing:'scheduled',checkInId:all.reply.medicationCheckIn.id,revision:all.reply.medicationCheckIn.revision};
+  assert.equal((await req('/api/medication-checkin','POST',timing,b)).status,409);
+  const pending=await(await req('/api/medication-checkin','POST',timing,a)).json();assert.equal(pending.reply.proposal.kind,'medicationBatch');
+  assert.equal((await req('/api/medication-checkin','POST',timing,a)).status,409);
+  const batch=pending.reply.proposal.id;const saves=await Promise.all([req('/api/actions/'+batch,'POST',{decision:'approve'},a),req('/api/actions/'+batch,'POST',{decision:'approve'},a)]);assert.ok(saves.every(r=>r.status===200));
+  const final=await(await req('/api/state','GET',null,a)).json();assert.deepEqual(final.medications.map(m=>m.stock),[4,4]);assert.equal(final.events.filter(e=>e.batchId===batch).length,2);assert.equal(final.agenda.medicationGroups.length,0);
+
  } finally {await mf.dispose();}
 });
