@@ -27,7 +27,7 @@ test('failed subscription registration revokes browser subscription',async()=>{
  const b=browser();try{await assert.rejects(enableNotifications(async()=>{throw new Error('Server unavailable');},config),/Server unavailable/);assert.equal((await notificationStatus()).enabled,false);assert.equal(b.events.at(-1),'unsubscribe');}finally{b.restore();}
 });
 test('blocked permission never registers a service worker or sends a subscription',async()=>{
- const b=browser();try{Notification.permission='denied';await assert.rejects(enableNotifications(async()=>assert.fail('No network write expected'),config),/blocking/);assert.deepEqual(b.events,[]);}finally{b.restore();}
+ const b=browser();try{Notification.permission='denied';await assert.rejects(enableNotifications(async()=>assert.fail('No network write expected'),config),/blocked/);assert.deepEqual(b.events,[]);}finally{b.restore();}
 });
 test('service worker never displays health details supplied in a push payload',async()=>{
  const handlers={};let shown;
@@ -49,7 +49,7 @@ test('another signed-in account cannot inherit a browser subscription',async()=>
 test('a dismissed Chrome prompt can finish later after Site controls grants permission, for the requesting account only',async()=>{
  const b=browser();try{
   Notification.requestPermission=async()=>{b.events.push('permission');return 'default';};
-  await assert.rejects(enableNotifications(async()=>assert.fail('Do not register before grant'),config,'late-account'),/waiting for your choice/);
+  await assert.rejects(enableNotifications(async()=>assert.fail('Do not register before grant'),config,'late-account'),/not granted permission yet/);
   assert.equal(pendingNotificationEnable('late-account'),true);assert.equal(pendingNotificationEnable('other-account'),false);
   let listener,removed=false,work;const permission={addEventListener(event,fn){assert.equal(event,'change');listener=fn;},removeEventListener(){removed=true;}};navigator.permissions={query:async()=>permission};
   const stop=watchNotificationPermission(()=>{if(pendingNotificationEnable('late-account'))work=enableNotifications(async()=>({ok:true}),config,'late-account');});
@@ -57,4 +57,18 @@ test('a dismissed Chrome prompt can finish later after Site controls grants perm
   assert.equal((await notificationStatus('late-account')).enabled,true);assert.equal(pendingNotificationEnable('late-account'),false);assert.equal(b.events.filter(e=>e==='permission').length,1);
   stop();assert.equal(removed,true);
  }finally{b.restore();}
+});
+
+test('diagnostics preserve click ordering and distinguish a blocked permission from an unaccepted prompt',async()=>{
+ const b=browser();try{
+  const records=[];const api=async(path,options)=>{b.events.push(['api',path]);if(path==='/api/push/diagnostics')records.push(JSON.parse(options.body));return{ok:true};};
+  await enableNotifications(api,{...config,features:{...config.features,notificationDiagnostics:true}},'diagnostic-account');
+  assert.equal(b.events[0],'permission');assert.ok(records.some(r=>r.phase==='permission-requested'&&r.beforePermission==='default'&&r.requestCalled));assert.ok(records.some(r=>r.phase==='permission-result'&&r.permissionResult==='granted'));assert.ok(records.some(r=>r.phase==='ready'&&r.hasSubscription));
+  records.length=0;b.events.length=0;Notification.permission='denied';
+  await assert.rejects(enableNotifications(api,{...config,features:{...config.features,notificationDiagnostics:true}},'diagnostic-account'),/cannot show another prompt/);
+  assert.equal(b.events.includes('permission'),false);assert.ok(records.some(r=>r.phase==='permission-blocked'&&r.requestCalled===false));assert.equal(b.events.some(e=>e?.[1]==='/api/push/subscriptions'),false);
+ }finally{b.restore();}
+});
+test('failure to send diagnostics cannot prevent granting permission or registering push',async()=>{
+ const b=browser();try{let registered=false;const r=await enableNotifications(async(path)=>{if(path==='/api/push/diagnostics')throw Error('telemetry unavailable');if(path==='/api/push/subscriptions')registered=true;return{ok:true};},{...config,features:{...config.features,notificationDiagnostics:true}});assert.equal(registered,true);assert.equal(r.enabled,true);assert.equal(b.events[0],'permission');}finally{b.restore();}
 });

@@ -1,3 +1,4 @@
+import {savePushDiagnostic} from './push-diagnostics.js';
 import {extractPhotoCaptureTime,resolvePhotoCaptureTime} from './photo-metadata.js';
 import {medicationCheckInAction,applyMedicationSelectionDraft} from './medication-checkin.js';
 import {journalQuery} from './journal.js';
@@ -89,13 +90,13 @@ export default {
       if (!configuredOrigins(env,url.origin).includes(url.origin))return json({error:'This hostname is not configured for SCIapp.'},421);
       const canonical=canonicalHome(request,env);
       if(canonical)return new Response(null,{status:302,headers:{...security,Location:canonical}});
-      if (path === '/api/health') {const {settings}=await aiConfiguration(env);return json({ status:'ok',version:'0.11.0',chatModel:settings.provider==='openai'?settings.chatModel:CHAT_MODEL,visionModel:settings.provider==='openai'?settings.visionModel:VISION_MODEL,provider:settings.provider,mode:'personal-beta' });}
-      if (path === '/api/config' && request.method === 'GET') return json({ appOrigin:env.APP_ORIGIN||url.origin, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null, authEnvironment: env.CLERK_PUBLISHABLE_KEY?.startsWith('pk_live_') ? 'production' : 'development', pushPublicKey:env.VAPID_PUBLIC_KEY||null, mode: env.CLERK_PUBLISHABLE_KEY ? 'authenticated' : 'preview', features: { notifications: !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY), memory:retrievalReady(env), resources:retrievalReady(env), medications:true, photos: true, transcription: !!env.AI, speech: false, caregivers: 'drafts', healthSystems:!!env.HEALTH_TOKEN_KEY, healthConnect: false }, notice: 'Personal care beta. Medication and allergy records are user-entered. Notifications are reminders, not guaranteed clinical alarms. Caregiver invitations remain drafts.' });
+      if (path === '/api/health') {const {settings}=await aiConfiguration(env);return json({ status:'ok',version:'0.11.1',chatModel:settings.provider==='openai'?settings.chatModel:CHAT_MODEL,visionModel:settings.provider==='openai'?settings.visionModel:VISION_MODEL,provider:settings.provider,mode:'personal-beta' });}
+      if (path === '/api/config' && request.method === 'GET') return json({ appOrigin:env.APP_ORIGIN||url.origin, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null, authEnvironment: env.CLERK_PUBLISHABLE_KEY?.startsWith('pk_live_') ? 'production' : 'development', pushPublicKey:env.VAPID_PUBLIC_KEY||null, mode: env.CLERK_PUBLISHABLE_KEY ? 'authenticated' : 'preview', features: { notifications: !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY),notificationDiagnostics:true, memory:retrievalReady(env), resources:retrievalReady(env), medications:true, photos: true, transcription: !!env.AI, speech: false, caregivers: 'drafts', healthSystems:!!env.HEALTH_TOKEN_KEY, healthConnect: false }, notice: 'Personal care beta. Medication and allergy records are user-entered. Notifications are reminders, not guaranteed clinical alarms. Caregiver invitations remain drafts.' });
       if (!path.startsWith('/api/')) {
         if (!['GET','HEAD'].includes(request.method)) return json({ error: 'Method not allowed.' },405);
         const asset = assets[({ '/':'/index.html', '/privacy':'/privacy.html', '/terms':'/terms.html', '/admin':'/admin.html', '/admin/':'/admin.html' })[path] || path];
         if (!asset) return new Response('Not found', { status: 404, headers: security });
-        return new Response(request.method === 'HEAD' ? null : asset.body, { headers: { ...security, 'Content-Type': asset.type, 'Content-Security-Policy': contentSecurityPolicy(env.CLERK_PUBLISHABLE_KEY) } });
+        return new Response(request.method === 'HEAD' ? null : asset.base64?Uint8Array.from(atob(asset.base64),c=>c.charCodeAt(0)):asset.body, { headers: { ...security, 'Content-Type': asset.type, 'Content-Security-Policy': contentSecurityPolicy(env.CLERK_PUBLISHABLE_KEY) } });
       }
       if (request.method !== 'GET') {
         const origin = request.headers.get('origin');
@@ -110,7 +111,7 @@ export default {
         await env.DB.prepare('INSERT INTO sessions(token_hash,account_id,expires_at) VALUES (?,?,?)').bind(await hash(token),id,Date.now()+7*86400000).run();
         return json({ state: publicState((await load(env,id)).state) },200,{ 'Set-Cookie': `__Host-sciapp=${token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=604800` });
       }
-      if(path.startsWith('/api/admin/'))return await adminRoute(request,env,ctx,{json,bodyJSON:r=>bodyJSON(r,600000),form,version:'0.11.0'});
+      if(path.startsWith('/api/admin/'))return await adminRoute(request,env,ctx,{json,bodyJSON:r=>bodyJSON(r,600000),form,version:'0.11.1'});
       if(path==='/api/health-systems/callback'&&request.method==='GET'){
         if(!env.HEALTH_TOKEN_KEY)throw new AppError('Health connections are not configured.',503);
         const result=await completeConnection(env,request);return new Response(null,{status:303,headers:{...security,Location:env.APP_ORIGIN+'/?health='+(result.cancelled?'cancelled':'connected'),'Set-Cookie':result.cookie}});
@@ -125,6 +126,7 @@ export default {
       if (path === '/api/session' && request.method === 'DELETE') { const token=(request.headers.get('cookie')||'').match(/(?:^|;\s*)__Host-sciapp=([^;]+)/)?.[1]; if(token)await env.DB.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await hash(token)).run(); return json({ok:true},200,{'Set-Cookie':'__Host-sciapp=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0'}); }
       if (path.startsWith('/api/push/')) {
         if(!id.startsWith('clerk:'))throw new AppError('Sign in to enable personal notifications.',403);
+        if(path==='/api/push/diagnostics'&&request.method==='POST'){await limit(request,env,'push-diagnostics',300);await savePushDiagnostic(env,id,await bodyJSON(request));return json({ok:true});}
         if(path==='/api/push/status'&&request.method==='GET')return json({...(await pushStatus(env,id)),enabled:(await load(env,id)).state.settings.notificationsEnabled===true});
         if(path==='/api/push/status'&&request.method==='POST'){const data=await bodyJSON(request);return json(await pushStatus(env,id,data.endpoint));}
         if(!env.VAPID_PRIVATE_KEY||!env.VAPID_PUBLIC_KEY)throw new AppError('Notifications are not configured on the server.',503);

@@ -1,4 +1,4 @@
-# Care journal and local-time reminders (0.11.0)
+# Care journal and local-time reminders (0.11.1)
 
 ## Reminder behavior
 
@@ -22,9 +22,15 @@ A valid camera offset produces an absolute capture timestamp. Without an offset,
 
 ## Push notifications
 
-The browser requests permission from a direct Enable button before network awaits. Device registration follows permission and service-worker subscription. Account-scoped endpoint checks detect a missing server registration and reconnect an already-authorized browser. The conversation exposes setup when this browser is disconnected. Browser or Android permission denial must be changed on that device.
+The browser requests permission from a direct Enable button before network or Permissions API awaits. An already-denied permission cannot display another native prompt; the app now says that explicitly instead of claiming all Chrome or Android notifications are blocked. Chrome 155+ on Android uses a non-blocking notification prompt, which can return default after timing out. Instructions explain Expand all requests and site-specific permission reset, plus the separate Android app permission when SCIapp is managed as an installed app. Device registration follows permission and service-worker subscription. Account-scoped endpoint checks detect a missing server registration and reconnect an already-authorized browser. The conversation exposes setup when this browser is disconnected. Browser or Android permission denial must be changed on that device.
 
 The Worker push fetch uses `redirect: manual`, rejects unsuccessful responses, and retains the FCM/Mozilla/Apple host allowlist, encrypted generic payloads, occurrence deduplication, retries, and expired-endpoint cleanup. No health details appear on the lock screen. Medication and catheter schedules use the same minute dispatcher.
+
+### Notification setup diagnostics
+
+`POST /api/push/diagnostics` records only whitelisted technical states in D1 `push_setup_diagnostics` (migration 0010). Reports are scoped to the signed-in account and a random browser ID. Fields include notification and Permissions API states, setup phase, whether requestPermission was called, user activation at that call, subscription presence, secure/top-level/standalone flags, Chrome major version, request duration, and sanitized error class. No endpoint, credential, full user agent, photo, care record, or arbitrary error text is stored. Each browser/phase retains its latest state; retention is bounded to 60 phase rows per account. Diagnostics failure never blocks permission or registration and does not modify the care ledger/account version.
+
+A new client reports status once per changed permission/connection state. Enable records blocked-before-request, requested, result, service-worker, subscribing, registering, ready and sanitized failure phases as applicable. A pending opt-in survives a denied/dismissed prompt so granting it later in Site Controls can reconnect automatically. A screenshot of global Chrome notification settings alone cannot establish SCIapp's actual permission or the precise Android layer blocking it.
 
 ## Persistent journal
 
@@ -36,20 +42,22 @@ Original image bytes remain in the private per-account R2 namespace. Image metad
 
 `query_care_journal` normally renders matching records and original image cards directly in chat. `purpose: lookup` permits reading identifiers or values before another action or analysis. Lookup results include server-formatted local timestamps; the model must not convert UTC clock strings itself. All lookups are read-only and account scoped. `journalNote` prepares a reviewed user observation with a resolved occurrence time, category, and optional owned photo. AI appearance estimates remain separate from user observations and are not diagnoses.
 
-History provides category/date filters, original image viewing, comparison of up to three images, correction visibility, and a self-contained HTML doctor report with the shown entries and embedded original images. Load additional pages before preparing a larger report. The ready links save the HTML or open it for browser printing / Save as PDF. Reports are generated locally and are not sent to anyone. Account JSON export includes care data and photo metadata, not original image bytes.
+History provides category/date filters, original image viewing, comparison of up to three images, correction visibility, and a PDF-only doctor report. One Download doctor PDF action generates and downloads an application/pdf file locally. The HTML download and browser-print alternatives were removed. Each unique original photo receives its own full-page view, with portrait or landscape orientation chosen to fit. JPEG/PNG source pixels are retained without thumbnail downsampling; rotated JPEGs and WebP are converted losslessly to upright PNG at their decoded dimensions. Notes remain selectable text using a locally bundled Unicode font. Long notes paginate, deleted/unavailable originals are explicitly labeled, and repeated references to the same image share one full-page photo. Load additional pages before preparing a larger report. Reports are generated in the browser and are not sent to anyone. Account JSON export includes care data and photo metadata, not original image bytes.
 
 ## Validation
 
-- 115 automated tests passed, plus JavaScript syntax checks, build, and whitespace checks.
+- 120 automated tests passed, plus JavaScript syntax checks, build, and whitespace checks.
 - Coverage includes the exact 09:30 / 11:30 regression, medication occurrence matching independent of push permission, local-date retrieval across UTC midnight, 70-record pagination, account isolation, retained original references, correction visibility, and approved timed observations.
 - Live Remote Browser used an isolated signed-in test account, synthetic records, actual R2 uploads, the configured AI provider, actual APIs, approval and persistence.
 - Verified native AI requests for What's next, yesterday's BP, last three catheter images, and a reviewed color/cloudiness note with its original image and observation time.
-- Verified mobile gallery, original images, three-image comparison, no horizontal overflow, and a printable self-contained report with three embedded original PNG images. Remote Browser did not expose a download completion event; the report opened and its complete embedded content was inspected.
+- Verified mobile gallery, original images, three-image comparison, no horizontal overflow, and the real PDF-only browser action producing an application/pdf Blob beginning with %PDF-. The file contains selectable dated records and full-page original images. Poppler rendering and pypdf inspection verified full 1200x1800 portrait and 1800x1200 landscape pixel dimensions, one page per unique image, pagination and legible captions. Remote Browser does not expose a completed download event; generated PDF bytes and the export UI were verified.
 - Verified real Web Push registration, provider acceptance, visible browser notification, and a separate medication occurrence delivered by the minute cron with one accepted attempt.
 - Live v0.11.0 checks verified the grouped all and partial touch flows at text scale 1.5, one group approval, independent stock changes, and unconfirmed/not-yet status for unselected medicines. Mobile selection labels were at least 109 CSS pixels high and the page had no horizontal overflow.
 - A hands-free test injected only SpeechRecognition hardware events. Actual AI, APIs, reviews and persistence processed “all except Synthetic Beta”, “just now”, and “approve”, recording two doses and leaving the third not taken yet. This verifies the hands-free application path; physical microphone accuracy still needs device testing.
 - Live mixed-input validation checked a medicine, invoked the refresh timer and a focus refresh, then sent “add Synthetic Beta too”. The selection survived, reached the real model as validated draft context, and the model retained both medicines. Cancelling the setup cleared that context.
 - A valid synthetic JPEG uploaded today carried yesterday's original camera timestamp. The real vision model read 118/76 with pulse 65; the review used the camera time, and a subsequent ordinary-language correction changed the care occurrence to 8 AM while retaining the 7 AM original capture time and today's upload time.
+- Live v0.11.1 browser tests set an account-scoped denied permission, verified the accurate message and persisted blocked-before-request trace, then granted permission and verified automatic push registration, a ready trace and visible Chrome notification. These are isolated test-browser results, not a diagnosis of the owner’s Android phone.
+- Deployment verification must check both /api/health and an asset added by the release. Upload success and deployment metadata can precede traffic/asset propagation; refreshing during rollout can load mismatched module/font revisions. Use the production environment content endpoint when replacing code while preserving existing bindings/settings; verify the final asset and live behavior after propagation.
 - Physical Android permission and notification receipt still require a test on that phone. No claim of physical Android validation is made.
 
 ## Storage boundary
