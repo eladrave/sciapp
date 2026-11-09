@@ -1,3 +1,4 @@
+import { aiDefaults, aiConfiguration, validateAI } from './ai-config.js';
 import { configureClient, clientStatus } from './health-systems.js';
 import { refreshDirectory } from './health-providers.js';
 import { processTranscriptions } from './resource-transcription.js';
@@ -53,6 +54,15 @@ export async function adminRoute(request,env,ctx,{json,bodyJSON,form,version}){
  if(path==='/api/admin/health-directory'&&request.method==='POST'){const count=await refreshDirectory(env,fetch,true);await audit(env,'health_directory_refresh').run();return json({count});}
  const healthClient=path.match(/^\/api\/admin\/health-clients\/(epic|epic-sandbox|oracle)$/);
  if(healthClient&&request.method==='PUT'){const result=await configureClient(env,healthClient[1],await bodyJSON(request));await audit(env,'health_client_configuration',healthClient[1]).run();return json(result);}
+ if(path==='/api/admin/ai'&&request.method==='GET')return json(await aiConfiguration(env));
+ if(path==='/api/admin/ai'&&request.method==='PUT'){
+  const d=await bodyJSON(request);if(!Number.isInteger(d?.version))throw new AppError('Refresh AI settings before saving.');const settings=validateAI(d.settings);
+  if(settings.provider==='openai'&&!env.OPENAI_API_KEY)throw new AppError('Set the OPENAI_API_KEY Worker secret first.',503);
+  await env.DB.prepare("INSERT OR IGNORE INTO ai_configuration VALUES('main',?,0)").bind(JSON.stringify(aiDefaults)).run();
+  const result=await env.DB.batch([env.DB.prepare("UPDATE ai_configuration SET value_json=?,version=version+1 WHERE id='main' AND version=?").bind(JSON.stringify(settings),d.version),audit(env,'ai_settings_update_attempt')]);
+  if(result[0].meta.changes!==1)throw new AppError('AI settings changed in another session. Refresh before saving.',409);
+  return json(await aiConfiguration(env));
+ }
  if(path==='/api/admin/session'&&request.method==='GET')return json({username:'admin',csrfToken:admin.csrf_token});
  if(path==='/api/admin/logout'&&request.method==='POST'){await env.DB.batch([env.DB.prepare('DELETE FROM admin_sessions WHERE token_hash=?').bind(admin.token_hash),audit(env,'logout')]);return json({ok:true},200,{'Set-Cookie':cookie('')});}
  if(path==='/api/admin/uploads'&&request.method==='POST'){

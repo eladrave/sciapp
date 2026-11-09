@@ -1,0 +1,13 @@
+# AI configuration
+
+The administrator manages the active provider, independent conversation/photo model IDs, reasoning effort and the maximum output token limit at `/admin`, Settings, AI models. Changes apply to the next request without a deployment. Configuration is stored in D1 `ai_configuration`; version checks prevent overwriting another administrator's changes.
+
+OpenAI defaults are `gpt-6-luna` for conversation with low reasoning and `gpt-6.1-terra` for photos with medium reasoning. The maximum output is 2,000 tokens including reasoning. There is no automatic escalation to a more expensive model. Model availability depends on the OpenAI project; an unsupported model or effort returns a generic error without changing care records. Future model IDs can be entered directly. Legacy mode keeps the existing Cloudflare Llama conversation and Scout photo models.
+
+The `OPENAI_API_KEY` secret belongs in Cloudflare Workers, `sciapp`, Settings, Variables and Secrets. It is not stored in D1, returned by the admin API, exposed to the browser or committed to Git. Replace the secret there, then choose OpenAI and save the AI configuration. Credential ownership and approval requirements are documented in the private Codex Drive knowledge, not in this repository. A rejected credential must not be left installed as an active provider.
+
+OpenAI calls use the Responses API with `store:false`, a 45-second timeout, no redirect following, one tool call per turn and no built-in external tools. Relevant care context, retrieved excerpts and conversation history are sent for conversation; uploaded image data is sent to the selected image model. `store:false` does not imply zero provider retention. Provider failures do not switch silently to a more expensive model. Cloudflare continues to supply embeddings and speech transcription.
+
+The existing backend validates tool intent, parses original medication schedules and requires approval before saving care changes. A new model cannot bypass these controls. Grouped medication schedules merge repeated medication entries and save explicit daily times on approval. As-needed medicines keep their instructions and have no routine dose reminders. Unlisted medicines are not removed automatically.
+
+Deployment requires additive migration `0009_ai_configuration.sql`. Without a saved configuration, OpenAI is selected only when an API key is installed; otherwise legacy Cloudflare remains active. To explicitly keep legacy mode after adding a secret, save Cloudflare in the admin settings before installing the key. Public `/api/health` reports the effective provider and models, never secrets.

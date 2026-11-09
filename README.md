@@ -95,3 +95,5 @@ Chat messages now reach the Llama 3.3 70B model first, using native typed care t
 Health system integrations: [setup, supported tools and current activation requirements](docs/health-systems.md). Patient-authorized hospital connections require vendor registration before real data access.
 
 Version 0.8.3 accepts medication schedules grouped by explicit AM/PM time headings. Approval saves daily times to the profile and reminders, merges repeated medicines, and retains as-needed instructions without routine PRN reminders. Unlisted medicines remain unchanged.
+
+Version 0.8.4 adds editable AI provider/model settings in Admin → Settings → AI models. OpenAI uses server-side credentials and the Responses API. See [AI configuration](docs/ai-configuration.md) for setup, privacy and rollback. Live OpenAI validation requires a valid project key; legacy Cloudflare can remain active during setup.

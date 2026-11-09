@@ -1,0 +1,1 @@
+CREATE TABLE IF NOT EXISTS ai_configuration (id TEXT PRIMARY KEY CHECK(id='main'), value_json TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 0);
