@@ -97,3 +97,5 @@ Health system integrations: [setup, supported tools and current activation requi
 Version 0.8.3 accepts medication schedules grouped by explicit AM/PM time headings. Approval saves daily times to the profile and reminders, merges repeated medicines, and retains as-needed instructions without routine PRN reminders. Unlisted medicines remain unchanged.
 
 Version 0.8.4 adds editable AI provider/model settings in Admin → Settings → AI models. OpenAI uses server-side credentials and the Responses API. See [AI configuration](docs/ai-configuration.md) for setup, privacy and rollback. Live OpenAI validation requires a valid project key; legacy Cloudflare can remain active during setup.
+
+Version 0.8.5 adds configurable OpenAI-compatible base URLs, encrypted provider keys, model discovery, manual model IDs, and Responses/Chat Completions selection in Admin AI settings.
