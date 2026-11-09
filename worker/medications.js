@@ -39,3 +39,24 @@ export function parseReminderTimes(text) {
  }
  return [...new Set(times)].sort();
 }
+
+// Time headings apply only to the following medication rows. Never infer a clock.
+export function parseMedicationSchedule(text) {
+ const lines=text.split(/\r?\n/).map(s=>s.trim().replace(/^[•*\-]\s*/, '')).filter(Boolean);
+ if(!lines.some(line=>/^\d{1,2}(?::\d{2})?\s*(?:am|pm)$/i.test(line)))return null;
+ const medications=[],invalid=[];let time=null;
+ for(const line of lines){
+  if(/^(?:(?:current|my) )?medications?(?: schedule)?\s*:?$/i.test(line))continue;
+  if(/^\d{1,2}(?::\d{2})?\s*(?:am|pm)$/i.test(line)){
+   const parsed=parseReminderTimes(line);time=parsed?.[0]||null;if(!time)invalid.push(line);continue;
+  }
+  const match=line.match(/^(.+?)\s+(\d+(?:\.\d+)?\s*(?:mg|mcg|µg|g|ml|units?|puffs?)\b)(?:\s*,?\s*(as needed\b.*|prn\b.*))?$/i);
+  if(!match||!time){invalid.push(line);continue;}
+  const name=match[1].trim(),dosage=match[2],asNeeded=Boolean(match[3]);
+  const old=medications.find(m=>medicationKey(m.name)===medicationKey(name));
+  if(old){if(old.dosage!==dosage||old.asNeeded!==asNeeded){invalid.push(line);continue;}if(!asNeeded&&!old.times.includes(time))old.times.push(time);}
+  else medications.push({name,dosage,asNeeded,frequency:asNeeded?match[3]: 'daily',times:asNeeded?[]:[time]});
+ }
+ for(const med of medications){med.times.sort();if(!med.asNeeded)med.frequency=`${med.times.length} times daily`;}
+ return {medications,allergies:[],invalid};
+}

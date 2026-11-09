@@ -49,9 +49,10 @@ export function proposal(state, kind, params) {
   } else if (kind === 'carePlan') {
     const medications = params.medications || [], allergies = params.allergies || [];
     if (!Array.isArray(medications) || medications.length > 50 || !Array.isArray(allergies) || allergies.length > 50 || !(medications.length + allergies.length)) throw new AppError('Provide a medication or allergy list.');
-    params = { medications: medications.map(m => ({name:string(m.name,'medication name',200),dosage:string(m.dosage,'dose label',200),frequency:string(m.frequency,'frequency',200),asNeeded: /as needed|\bprn\b/i.test(m.frequency)})), allergies:allergies.map(a => string(a,'allergy',200)) };
+    params = { medications: medications.map(m => ({name:string(m.name,'medication name',200),dosage:string(m.dosage,'dose label',200),frequency:string(m.frequency,'frequency',200),asNeeded: /as needed|\bprn\b/i.test(m.frequency),...(m.times===undefined?{}:{times:m.times})})), allergies:allergies.map(a => string(a,'allergy',200)) };
+    for(const med of params.medications)if(med.times!==undefined){if(!Array.isArray(med.times)||med.times.length>12||med.times.some(t=>typeof t!=='string'||!/^([01]\d|2[0-3]):[0-5]\d$/.test(t)))throw new AppError('Provide valid daily medication times.');med.times=med.asNeeded?[]:[...new Set(med.times)].sort();}
     if(new Set(params.medications.map(m=>medicationKey(m.name))).size !== params.medications.length)throw new AppError('The list includes the same medication more than once. Please resolve the duplicate first.');
-    title = 'Save medication and allergy list'; details = [...params.medications.map(m=>`${m.name}: ${m.dosage}, ${m.frequency}`), ...params.allergies.map(a=>`Allergy: ${a}`),'Store exactly as entered by you. Reminder times and stock counts need separate setup.'];
+    title = 'Save medication and allergy list'; details = [...params.medications.map(m=>`${m.name}: ${m.dosage}, ${m.frequency}${m.times===undefined?'':m.asNeeded?' (as needed, no routine reminders)':` at ${m.times.join(', ')} (${state.settings.timezone})`}`), ...params.allergies.map(a=>`Allergy: ${a}`),'Save to your profile. Explicit daily times schedule reminders; device permission is required for notifications. Stock counts are not changed. Medications absent from this list remain unchanged.'];
   } else if (kind === 'medicationSchedule') {
     const med = findMedication(state, params.medicationId || params.name);
     if(!med)throw new AppError('Choose a medication from your list.');
@@ -128,10 +129,11 @@ export function finishProposal(state, id, decision) {
   if (p.kind === 'carePlan') {
     state.medications ||= [];state.allergies ||= [];
     for (const med of data.medications) {
-      const old = state.medications.find(m=>medicationKey(m.name)===medicationKey(med.name)) || findMedication(state,med.name);
-      if(old){const changed=old.frequency!==med.frequency||old.dosage!==med.dosage;Object.assign(old,med,{active:true,updatedAt:now()});if(changed||med.asNeeded)old.times=[];if(changed){old.unitsConfigured=false;old.unitsPerDose=null;}}
-      else state.medications.push({id:uid(),...med,times:[],stock:null,unitsPerDose:null,unitsConfigured:false,unit:'units',active:true,createdAt:now(),updatedAt:now()});
+      const old = state.medications.find(m=>medicationKey(m.name)===medicationKey(med.name)) || findMedication(state,med.name) || findMedication(state,med.name.replace(/\([^)]*\)/g, "").trim());
+      if(old){const changed=old.frequency!==med.frequency||old.dosage!==med.dosage;Object.assign(old,med,{active:true,updatedAt:now()});if(changed||med.asNeeded)old.times=[];if(med.times!==undefined){old.times=med.times;old.scheduleUpdatedAt=now();}if(changed){old.unitsConfigured=false;old.unitsPerDose=null;}}
+      else state.medications.push({id:uid(),...med,times:med.times||[],stock:null,unitsPerDose:null,unitsConfigured:false,unit:'units',active:true,createdAt:now(),updatedAt:now()});
     }
+    if(data.medications.some(m=>m.times?.length))state.settings.notificationsEnabled=true;
     for(const allergy of data.allergies)if(!state.allergies.some(a=>medicationKey(a)===medicationKey(allergy)))state.allergies.push(allergy);
   }
   if (p.kind === 'medicationSchedule') { const med=state.medications.find(m=>m.id===data.medicationId&&m.active!==false);if(!med)throw new AppError('This medication is no longer active.',409);med.times=data.times;med.updatedAt=now();med.scheduleUpdatedAt=now(); }
@@ -153,7 +155,7 @@ export function finishProposal(state, id, decision) {
   const stockItem=event.delta?.medicationId ? state.medications.find(m=>m.id===event.delta.medicationId) : state.inventory.find(i=>i.id===event.delta?.itemId);
   const suffix = stockItem ? ` You have ${event.delta.medicationId?stockItem.stock:stockItem.count} ${stockItem.unit} remaining.` : '';
   if(p.kind==='catheterSchedule')return message('assistant',`Daily catheterization reminders saved: ${data.times.join(', ')} (${data.timezone}). Scheduled notifications are on for registered devices. If this device is not enabled yet, select Enable notifications on this device. Your care-use records and stock are unchanged.`,{options:['Enable notifications on this device','Show my tasks']});
-  if(p.kind==='carePlan')return message('assistant','Medication and allergy list saved. Frequencies are stored exactly as entered. Reminder times and stock counts are not inferred. Which medication would you like to configure first?',{options:['Show my medications','Set medication reminders']});
+  if(p.kind==='carePlan')return message('assistant','Medication and allergy list saved to your profile. Any explicit daily times were saved for reminders. As-needed medicines have no routine reminders. Device notifications require permission. Other medications and stock counts remain unchanged.',{options:['Show my medications','Set medication reminders']});
   return message('assistant', (p.kind === 'caregiver' ? 'Invitation draft saved. It has not been sent, and no access has been granted.' : 'Saved.') + suffix, { options: ['What is next?', 'Show my supplies'] });
 }
 function syncProposal(state, p) { for (const m of state.messages) if (m.proposal?.id === p.id) m.proposal.status = p.status; }

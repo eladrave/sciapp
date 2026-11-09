@@ -58,3 +58,49 @@ test('migrating a renamed sample catheter product never preserves the seeded bal
  const s=initialState();s.inventory[0].name='Sample product label';s.inventory[0].count=90;
  migratePersonalState(s);assert.equal(s.inventory[0].count,null);assert.equal(s.inventory[0].name,'Sample product label');
 });
+
+test('grouped daily schedule merges repeated medications, saves explicit clocks after approval and retains PRN',()=>{
+ const s=initialState({real:true});
+ const input=`Current medication schedule
+8:30 AM
+Eliquis (apixaban) 5 mg
+Baclofen 10 mg
+Midodrine 10 mg
+Fludrocortisone 0.1 mg
+Duloxetine 30 mg
+Gabapentin 800 mg
+12:00 PM
+Baclofen 10 mg
+Midodrine 10 mg
+4:00 PM
+Baclofen 10 mg
+Gabapentin 800 mg
+9:30 PM
+Eliquis (apixaban) 5 mg
+Baclofen 10 mg
+Gabapentin 800 mg
+Trazodone 50 mg, as needed for insomnia`;
+ const r=handleKnown(s,input);assert.equal(r.proposal.kind,'carePlan');assert.equal(s.medications.length,0);
+ approve(s,r);assert.equal(s.medications.length,7);assert.equal(s.settings.notificationsEnabled,true);
+ const med=name=>s.medications.find(m=>m.name===name);
+ assert.deepEqual(med('Baclofen').times,['08:30','12:00','16:00','21:30']);
+ assert.deepEqual(med('Eliquis (apixaban)').times,['08:30','21:30']);
+ assert.deepEqual(med('Gabapentin').times,['08:30','16:00','21:30']);
+ assert.equal(med('Fludrocortisone').dosage,'0.1 mg');
+ assert.equal(med('Trazodone').frequency,'as needed for insomnia');assert.deepEqual(med('Trazodone').times,[]);
+ approve(s,handleKnown(s,input));assert.equal(s.medications.length,7);assert.equal(s.events.filter(e=>e.kind==='medication').length,0);
+});
+test('grouped schedules reject invalid clocks, unparsed rows and conflicting dose labels without partial writes',()=>{
+ for(const input of ['Current medication schedule\n13:00 PM\nDemo 5 mg','8:30 AM\nDemo 5 mg\nunknown','8:30 AM\nDemo 5 mg\n9:30 PM\nDemo 10 mg']){
+  const s=initialState({real:true});assert.equal(handleKnown(s,input).proposal,undefined);assert.equal(s.medications.length,0);
+ }
+ assert.throws(()=>proposal(initialState({real:true}),'carePlan',{medications:[{name:'Demo',dosage:'5 mg',frequency:'daily',times:['25:00']}]}),/valid daily/);
+});
+
+test('native AI care-plan tool handles time headings and updates an existing brand without duplicating it',async()=>{
+ const {executeCareTool}=await import('../worker/chat-tools.js');const s=initialState({real:true});
+ approve(s,handleKnown(s,'Add medication DemoBrand 5 mg, once daily'));
+ const id=s.medications[0].id;
+ const reply=await executeCareTool({},'synthetic',s,'Current medication schedule\n8:30 AM\nDemoBrand (generic) 10 mg\n9:30 PM\nDemoBrand (generic) 10 mg',{name:'manage_care_plan',arguments:{}});
+ assert.equal(reply.proposal.kind,'carePlan');approve(s,reply);assert.equal(s.medications.length,1);assert.equal(s.medications[0].id,id);assert.deepEqual(s.medications[0].times,['08:30','21:30']);
+});

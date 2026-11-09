@@ -93,3 +93,5 @@ Uploaded MP3/WAV/M4A/MP4/WebM/OGG/FLAC can generate background speech transcript
 Chat messages now reach the Llama 3.3 70B model first, using native typed care tools. Backend validation and review still gate writes; deterministic parsing is a tool validator/offline fallback, not the primary router. Catheter reminders support explicit daily wall-clock times across midnight as well as intervals. See docs/conversation-tools.md.
 
 Health system integrations: [setup, supported tools and current activation requirements](docs/health-systems.md). Patient-authorized hospital connections require vendor registration before real data access.
+
+Version 0.8.3 accepts medication schedules grouped by explicit AM/PM time headings. Approval saves daily times to the profile and reminders, merges repeated medicines, and retains as-needed instructions without routine PRN reminders. Unlisted medicines remain unchanged.
