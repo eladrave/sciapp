@@ -1,6 +1,6 @@
 import { createChatScroll } from './chat-scroll.js';
 import { confirmationDelay } from './conversation-controls.js';
-import { notificationStatus, enableNotifications, disableNotifications, detachBrowserNotifications, testNotification } from './notifications.js';
+import { notificationStatus, watchNotificationPermission, pendingNotificationEnable, permissionGuidance, enableNotifications, disableNotifications, detachBrowserNotifications, testNotification } from './notifications.js';
 const $ = (selector) => document.querySelector(selector);
 const ui = Object.fromEntries(['welcome','app','start-preview','sign-in','welcome-error','messages','message','composer','send','error','thinking','mute','mute-label','mute-icon','voice','voice-label','recording-status','photo','photo-input','attachment','attachment-image','attachment-status','remove-photo','panel','conversation','page-label','composer-area','avatar','date-label','composer-hint','account','announcer'].map(id => [id, document.getElementById(id)]));
 let state, config, activePage = 'Conversation', busy = false, photo = null, photoPreview, recorder, recordStream, recording = false, recognition, audioChunks = [], uploadBusy = false;
@@ -196,12 +196,17 @@ function renderPanel() {
  if (activePage === 'Settings') {
   panel.append(panelHeader('Make this space yours.','You can change your preferences here, or just ask in the conversation.'));
   const notifications = node('section','data-card'); notifications.append(node('h2','','Device notifications'));
-  notifications.append(node('p','',pushStatus.enabled ? (state.settings.notificationsEnabled===false ? 'This device is connected, but scheduled notifications are turned off for your account. Enable again to resume them.' : 'Enabled on this browser. Lock-screen messages contain no medication names or health details.') : pushStatus.permission === 'denied' ? 'Blocked in browser settings. Allow notifications for this site to enable reminders.' : 'Off on this device. Enable to receive reminders even when this page is closed.'));
+  notifications.append(node('p','',pushStatus.enabled ? (state.settings.notificationsEnabled===false ? 'This device is connected, but scheduled notifications are turned off for your account. Enable again to resume them.' : 'Enabled on this browser. Lock-screen messages contain no medication names or health details.') : pushStatus.permission === 'denied' ? 'Chrome or Android is blocking this device. Your schedule is saved, but this device cannot receive reminders until permission is allowed.' : 'Off on this device. Enable to receive reminders even when this page is closed.'));
   if (pushServerStatus?.lastAcceptedAt) notifications.append(node('p','',`Last accepted by push service: ${formatTime(pushServerStatus.lastAcceptedAt)}`));
   if (pushServerStatus?.lastError) notifications.append(node('p','error-text',`Latest delivery attempt: ${pushServerStatus.lastError}`));
   notifications.append(node('p','','Delivery depends on your browser, connection, and device settings. Reminders are not emergency alarms.'));
+  if(pushStatus.permission==='denied'||pushStatus.permission==='default'){
+   const help=node('details','notification-help');help.open=pushStatus.permission==='denied';help.append(node('summary','','How to allow notifications on Android'));
+   const steps=node('ol');['In Chrome, tap ⋮ → Site controls → Permissions → Notifications. Choose Allow.','If Chrome notifications are off for the whole phone, open Android Settings → Apps → Chrome → Notifications and turn them on.','Return to SCIapp. If it is not connected automatically, select Enable notifications on this device. Then send a test notification.'].forEach(text=>steps.append(node('li','',text)));help.append(steps,node('p','','A small Get notifications? message may appear below the address bar instead of a pop-up. Tap Allow there.'));
+   const guide=node('a','','Google Chrome notification instructions');guide.href='https://support.google.com/chrome/answer/3220216?co=GENIE.Platform%3DAndroid&hl=en';guide.target='_blank';guide.rel='noopener noreferrer';help.append(guide);notifications.append(help);
+  }
   const notifyActions = node('div','care-actions');
-  const enable = button('Enable notifications on this device','secondary',()=>notificationAction('enable')); enable.disabled = notificationBusy || !config?.features?.notifications || !window.Clerk?.session;
+  const enable = button(pushStatus.permission==='denied'?'How to allow notifications':'Enable notifications on this device','secondary',()=>notificationAction('enable')); enable.disabled = notificationBusy || !config?.features?.notifications || !window.Clerk?.session;
   notifyActions.append(enable);
   if (pushStatus.enabled) { const test = button('Send test notification','secondary',()=>notificationAction('test')); const off = button('Disable notifications on this device','secondary',()=>notificationAction('disable')); test.disabled = off.disabled = notificationBusy; notifyActions.append(test,off); }
   if (!window.Clerk?.session) notifications.append(node('p','','Sign in to enable notifications for your personal account.'));
@@ -225,12 +230,12 @@ function notificationCommand(text) {
 function chooseReply(text) { const command = notificationCommand(text); return command ? notificationAction(command) : send(text); }
 async function refreshNotificationStatus() {
  const generation = accountGeneration;
- try { const next = await notificationStatus(window.Clerk?.user?.id || window.Clerk?.session?.user?.id); const server = window.Clerk?.session ? await api('/api/push/status') : null; if (generation !== accountGeneration) return; pushServerStatus = server; pushStatus = next; if (activePage === 'Settings' && state) renderPanel(); } catch {}
+ try { const next = await notificationStatus(window.Clerk?.user?.id || window.Clerk?.session?.user?.id); const server = window.Clerk?.session ? await api('/api/push/status') : null; if (generation !== accountGeneration) return; pushServerStatus = server; pushStatus = next; if (activePage === 'Settings' && state) renderPanel();const id=window.Clerk?.user?.id||window.Clerk?.session?.user?.id;if(!notificationBusy&&window.Clerk?.session&&next.permission==='granted'&&pendingNotificationEnable(id))await notificationAction('enable',{resume:true}); } catch {}
 }
-async function notificationAction(action) {
+async function notificationAction(action,{resume=false}={}) {
  if (notificationBusy) return;
  if (!window.Clerk?.session) { error('Sign in before enabling personal notifications.'); return; }
- if (action === 'enable' && navigator.userActivation && !navigator.userActivation.isActive) { switchPage('Settings'); error('Select Enable notifications on this device to allow the browser permission request.'); return; }
+ if (action === 'enable' && !resume && navigator.userActivation && !navigator.userActivation.isActive) { switchPage('Settings'); error('Select Enable notifications on this device to allow the browser permission request.'); return; }
  notificationBusy = true; error();
  const generation = accountGeneration;
  const notificationApi = (path,options) => { if (generation !== accountGeneration) throw staleError(); return api(path,options); };
@@ -244,7 +249,7 @@ async function notificationAction(action) {
   if (action === 'enable') update(await notificationApi('/api/state'));
   const text = action === 'test' ? 'Test notification sent to this device’s push service. Check the notification tray.' : action === 'enable' ? 'Notifications enabled on this device. Set your reminder times in the conversation.' : 'Notifications disabled on this device.';
   ui.announcer.textContent = text; error(text);
- } catch(e) { if (generation === accountGeneration) error(e.message); }
+ } catch(e) { if (generation === accountGeneration) error(typeof Notification!=='undefined'&&Notification.permission==='denied'&&pendingNotificationEnable(window.Clerk?.user?.id||window.Clerk?.session?.user?.id)?permissionGuidance('denied'):e.message); }
  finally { if (generation === accountGeneration) { notificationBusy = false; await refreshNotificationStatus(); } }
 }
 async function undo(id) { if (busy) return; const generation = accountGeneration; setBusy(true); error(); stopHandsFree(); try { const result = await api(`/api/events/${encodeURIComponent(id)}/undo`,{method:'POST'}); receive(result); } catch(e) { if(e.name !== 'AbortError') error(e.message); } finally { if(generation === accountGeneration) {setBusy(false); focusComposer(); resumeHandsFree();} } }
@@ -368,3 +373,5 @@ window.addEventListener('sciapp:signed-in',async () => { clearAccountWork(); ui.
 window.addEventListener('pagehide',() => { stopHandsFree(); revokeHistoricalPhotos(); recordStream?.getTracks().forEach(track => track.stop()); window.speechSynthesis?.cancel(); });
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message',event=>{if(event.data?.type==='sciapp:open-today' && state){switchPage('Today');api('/api/state').then(update).catch(e=>error(e.message));}});
+
+watchNotificationPermission(()=>{if(state&&!notificationBusy)refreshNotificationStatus();});

@@ -1,4 +1,4 @@
-# Current status: personal care beta 0.7.0
+# Current status: personal care beta 0.7.1
 
 The primary domain is https://sciapp.eladrave.com, with the workers.dev origin retained for transition. Domain configuration and future migration steps are documented in domain-migration.md.
 
@@ -16,7 +16,7 @@ The live app uses real Cloudflare D1/R2 persistence with isolated Clerk account 
 
 ## Validation
 
-58 automated tests pass, including workerd/Miniflare personal-account API persistence/isolation, concurrent approvals, medication stock and unit validation, notification permission behavior, generic lock-screen content, retry/deduplication/expiry, and DST scheduling. JavaScript checks and build pass.
+63 automated tests pass, including workerd/Miniflare personal-account API persistence/isolation, concurrent approvals, medication stock and unit validation, notification permission behavior, generic lock-screen content, retry/deduplication/expiry, and DST scheduling. JavaScript checks and build pass.
 
 Live mobile browser checks at 412 × 915 verified generic medication/allergy import, review, explicit schedule, stock decrement once, reload persistence, Today rendering, and no horizontal overflow. Live health reports 0.7.0; notification configuration is enabled. The Cloudflare minute cron and additive D1 migration are installed.
 
@@ -87,3 +87,18 @@ Version 0.7.0 routes chat text through the model before care parsers. Workers AI
 Daily catheter times use timezone-aware recurring occurrences, including overnight slots. Approval enables the account reminder flag and catheter schedule; browser permission/subscription remains device-controlled. Notifications and due tasks never consume inventory. Interval mode remains separate. Unapproved legacy catheter entries derived from schedule messages are cancelled and replaced with schedule reviews on the next signed-in state load. Confirmed records are not automatically changed.
 
 Live 0.7.0 checks used a separate synthetic preview: a plain-English routine selected the native daily scheduling tool, five exact synthetic clock times were proposed, text approval saved the schedule, and What is next returned concrete upcoming daily times spanning midnight. Account notifications became enabled, the care-use count stayed zero, and inventory stayed unchanged. No horizontal overflow occurred. A real Cloudflare inference also selected the expected native tool directly. The private screenshot utterance was verified separately without committing personal schedule data. Both synthetic preview accounts were removed. No real device delivery is claimed from the mocked-provider push tests.
+
+
+## Photo interpretation and device permissions, 0.7.1
+
+Photos now use Workers AI Llama 4 Scout through native multimodal messages, separately from the Llama 3.3 chat model. The prompt explicitly maps SYS/DIA/pulse labels and preserves absent values as null. The backend rejects nonnumeric/out-of-range output, keeps the original photo linked to the vital-sign review, and requires approval before recording it. A failed inference is identified as a processing failure, not evidence that the display was unreadable; logs contain only a generic event/model, never image content or readings.
+
+A private user-supplied monitor photo was checked visually and reprocessed directly with both models. Llama 3.2 gave incorrect readings and inconsistent formatting. Scout matched the visible BP digits and did not invent an absent pulse, including with the exact production extraction prompt. This validates that example, not general medical-device OCR accuracy. The photo and personal readings are excluded from the public repository.
+
+Blocked notifications now show Chrome and Android permission instructions. Pending permission choices remain scoped to the requesting account. A permission-change listener and focus/visibility refresh finish registration if that user later grants permission. Denied permission is never repeatedly requested; dismissed/default is distinguished from denied. Existing schedules remain saved. Automated tests cover late permission grants, owner isolation, actual image payload format, absent pulse and review-only photo readings. Physical Android permission controls and end-to-end phone delivery still require device verification.
+
+The photo workflow also accepts the chat model selecting record_vitals for an attachment, but exclusively uses the validated photo extraction rather than copied or invented tool arguments. Both tool choices preserve the source photo through review and confirmation. Failed or incomplete BP extraction cannot become a guessed vital-sign proposal.
+
+Live 0.7.1 validation: the health endpoint reports Scout; anonymous personal API access still returns 401. A synthetic monitor image went through live upload, Scout extraction, chat tool selection and a photo-linked pending BP/pulse review. It recorded no event before approval. UI approval saved exactly one vital event with the original photo ID and preserved inventory. At 412 x 915, the image/review screen had no horizontal overflow. A separate isolated browser test with mocked identity, permission events and push provider validated denied-permission guidance and registration exactly once after a late grant, without requesting permission again or overflowing the mobile layout. This tests browser logic, not physical phone delivery. The test is preserved in test/browser/notifications.spec.js.
+
+The local Playwright suite could not launch because its Chromium headless executable is absent. The live/remote browser checks above are separate evidence; no local Playwright pass is claimed.

@@ -82,10 +82,10 @@ export function proposal(state, kind, params) {
     params = { volume: number(params.volume, 'volume in mL', 0, 3000), photoId: params.photoId || null };
     title = 'Save bag reading'; details = [`${params.volume} mL currently in bag`, 'Visual estimate checked by you', 'No catheter deducted; this is not cumulative urine output'];
   } else if (kind === 'vitals') {
-    params = { systolic: params.systolic == null ? null : number(params.systolic, 'systolic pressure', 30, 300), diastolic: params.diastolic == null ? null : number(params.diastolic, 'diastolic pressure', 20, 250), heartRate: params.heartRate == null ? null : number(params.heartRate, 'heart rate', 20, 250) };
+    params = { systolic: params.systolic == null ? null : number(params.systolic, 'systolic pressure', 30, 300), diastolic: params.diastolic == null ? null : number(params.diastolic, 'diastolic pressure', 20, 250), heartRate: params.heartRate == null ? null : number(params.heartRate, 'heart rate', 20, 250), ...(params.photoId ? {photoId:String(params.photoId)} : {}) };
     if ((params.systolic == null) !== (params.diastolic == null)) throw new AppError('Please provide both blood pressure numbers.');
     if (params.systolic == null && params.heartRate == null) throw new AppError('Please provide a blood pressure or heart-rate reading.');
-    title = 'Save your reading'; details = [params.systolic == null ? null : `Blood pressure: ${params.systolic}/${params.diastolic} mmHg`, params.heartRate == null ? null : `Heart rate: ${params.heartRate} bpm`, 'Source: entered by you'].filter(Boolean);
+    title = 'Save your reading'; details = [params.systolic == null ? null : `Blood pressure: ${params.systolic}/${params.diastolic} mmHg`, params.heartRate == null ? null : `Heart rate: ${params.heartRate} bpm`, params.photoId ? 'Source: photo, check the displayed numbers before approving' : 'Source: entered by you'].filter(Boolean);
   } else if (kind === 'settings') {
     const allowed = ['muted', 'handsFree', 'voicePauseMs', 'textScale', 'quietUntil', 'catheterIntervalHours', 'name', 'timezone', 'catheterRemindersEnabled', 'catheterStartAt', 'notificationsEnabled', 'catheterScheduleMode'];
     params = Object.fromEntries(Object.entries(params).filter(([k]) => allowed.includes(k)));

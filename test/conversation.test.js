@@ -1,3 +1,4 @@
+import { executeCareTool } from '../worker/chat-tools.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { initialState, finishProposal } from '../worker/domain.js';
@@ -45,5 +46,32 @@ test('Workers AI object response and completion response are both supported',asy
 test('vision uses required prompt and preserves uncertain values',async()=>{
  let payload;const photo={arrayBuffer:async()=>new Uint8Array([1,2,3]).buffer,httpMetadata:{contentType:'image/png'}};
  const r=await analyzePhoto({AI:{run:async(_,body)=>{payload=body;return {response:'{"type":"supplies","product":"Demo","unitsPerBox":null}'}}}},photo,'Read the box');
- assert.equal(typeof payload.prompt,'string');assert.equal(payload.messages,undefined);assert.equal(r.unitsPerBox,null);
+ assert.equal(payload.temperature,0);assert.match(payload.messages[0].content[0].text,/SYS is systolic/);assert.equal(payload.messages[0].content[1].image_url.url,'data:image/png;base64,AQID');assert.equal(r.unitsPerBox,null);
+});
+
+test('monitor photos create reviewable readings linked to the original photo, without guessing pulse',()=>{
+ const s=initialState();const r=handleKnown(s,'Record this photo',{type:'monitor',systolic:123,diastolic:81,heartRate:null},'test-photo');
+ assert.equal(r.proposal.kind,'vitals');assert.ok(r.proposal.details.includes('Blood pressure: 123/81 mmHg'));assert.ok(!r.proposal.details.some(x=>x.includes('bpm')));assert.equal(s.events.length,0);assert.equal(s.proposals.at(-1).params.photoId,'test-photo');
+});
+test('vision rejects invented strings and out-of-range measurements',async()=>{
+ const r=await analyzePhoto({AI:{run:async()=>({response:{type:'monitor',systolic:'123',diastolic:999,heartRate:null}})}},{arrayBuffer:async()=>new Uint8Array([1]).buffer},'');
+ assert.equal(r.systolic,null);assert.equal(r.diastolic,null);assert.equal(r.heartRate,null);
+});
+
+test('both photo tools preserve extracted evidence and original source until approval',async()=>{
+ for(const name of ['use_photo','record_vitals']){
+  const s=initialState({real:true});
+  const evidence={type:'monitor',systolic:123,diastolic:81,heartRate:null};
+  const reply=await executeCareTool({},'clerk:test',s,'Read this monitor',{name,arguments:{systolic:200,diastolic:100,heartRate:80}},evidence,'test-photo');
+  assert.equal(reply.proposal.kind,'vitals');assert.equal(s.events.length,0);
+  assert.deepEqual(s.proposals.at(-1).params,{systolic:123,diastolic:81,heartRate:null,photoId:'test-photo'});
+  finishProposal(s,reply.proposal.id,'approve');assert.equal(s.events[0].data.photoId,'test-photo');assert.equal(s.events[0].data.systolic,123);
+ }
+});
+test('failed or incomplete photo evidence cannot turn invented chat-model values into a vital reading',async()=>{
+ for(const photoData of [{type:'other',notes:'The image-processing service did not complete.'},{type:'monitor',systolic:123,diastolic:null,heartRate:null}]){
+  const s=initialState({real:true});
+  const reply=await executeCareTool({},'clerk:test',s,'Read this monitor',{name:'record_vitals',arguments:{systolic:123,diastolic:81}},photoData,'test-photo');
+  assert.equal(reply.proposal,undefined);assert.equal(s.proposals.length,0);assert.equal(s.events.length,0);assert.equal(reply.photoId,'test-photo');
+ }
 });

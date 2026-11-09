@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { enableNotifications, disableNotifications, notificationStatus } from '../web/notifications.js';
+import { enableNotifications, disableNotifications, notificationStatus, pendingNotificationEnable, watchNotificationPermission } from '../web/notifications.js';
 
 function browser() {
  const saved = Object.fromEntries(['navigator','window','Notification'].map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
@@ -10,7 +10,7 @@ function browser() {
  const sub={endpoint:'https://fcm.googleapis.com/example',toJSON(){return {endpoint:this.endpoint,keys:{p256dh:'sample',auth:'sample'}};},async unsubscribe(){events.push('unsubscribe');current=null;return true;}};
  const registration={pushManager:{async getSubscription(){return current;},async subscribe(options){events.push(['subscribe',options]);current=sub;return sub;}}};
  Object.defineProperty(globalThis,'window',{configurable:true,value:{PushManager:function(){},Notification:function(){}}});
- Object.defineProperty(globalThis,'Notification',{configurable:true,value:{permission:'granted',async requestPermission(){events.push('permission');return this.permission;}}});
+ Object.defineProperty(globalThis,'Notification',{configurable:true,value:{permission:'default',async requestPermission(){events.push('permission');this.permission='granted';return this.permission;}}});
  Object.defineProperty(globalThis,'navigator',{configurable:true,value:{serviceWorker:{async register(path){events.push(['register',path]);return registration;},ready:Promise.resolve(registration),async getRegistration(){return registration;}}}});
  return {events,sub,restore(){for(const [key,value]of Object.entries(saved)){if(value)Object.defineProperty(globalThis,key,value);else delete globalThis[key];}}};
 }
@@ -27,7 +27,7 @@ test('failed subscription registration revokes browser subscription',async()=>{
  const b=browser();try{await assert.rejects(enableNotifications(async()=>{throw new Error('Server unavailable');},config),/Server unavailable/);assert.equal((await notificationStatus()).enabled,false);assert.equal(b.events.at(-1),'unsubscribe');}finally{b.restore();}
 });
 test('blocked permission never registers a service worker or sends a subscription',async()=>{
- const b=browser();try{Notification.permission='denied';await assert.rejects(enableNotifications(async()=>assert.fail('No network write expected'),config),/blocked/);assert.deepEqual(b.events,['permission']);}finally{b.restore();}
+ const b=browser();try{Notification.permission='denied';await assert.rejects(enableNotifications(async()=>assert.fail('No network write expected'),config),/blocking/);assert.deepEqual(b.events,[]);}finally{b.restore();}
 });
 test('service worker never displays health details supplied in a push payload',async()=>{
  const handlers={};let shown;
@@ -43,5 +43,18 @@ test('another signed-in account cannot inherit a browser subscription',async()=>
   assert.equal((await notificationStatus('account-a')).enabled,true);
   assert.equal((await notificationStatus('account-b')).enabled,false);
   assert.equal(b.events.at(-1),'unsubscribe');
+ }finally{b.restore();}
+});
+
+test('a dismissed Chrome prompt can finish later after Site controls grants permission, for the requesting account only',async()=>{
+ const b=browser();try{
+  Notification.requestPermission=async()=>{b.events.push('permission');return 'default';};
+  await assert.rejects(enableNotifications(async()=>assert.fail('Do not register before grant'),config,'late-account'),/waiting for your choice/);
+  assert.equal(pendingNotificationEnable('late-account'),true);assert.equal(pendingNotificationEnable('other-account'),false);
+  let listener,removed=false,work;const permission={addEventListener(event,fn){assert.equal(event,'change');listener=fn;},removeEventListener(){removed=true;}};navigator.permissions={query:async()=>permission};
+  const stop=watchNotificationPermission(()=>{if(pendingNotificationEnable('late-account'))work=enableNotifications(async()=>({ok:true}),config,'late-account');});
+  await Promise.resolve();Notification.permission='granted';listener();await work;
+  assert.equal((await notificationStatus('late-account')).enabled,true);assert.equal(pendingNotificationEnable('late-account'),false);assert.equal(b.events.filter(e=>e==='permission').length,1);
+  stop();assert.equal(removed,true);
  }finally{b.restore();}
 });

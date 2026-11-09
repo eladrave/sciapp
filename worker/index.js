@@ -11,7 +11,7 @@ import { reminderTasks } from './reminders.js';
 import { reminderChat, repairLegacyScheduleReview } from './reminder-chat.js';
 import { subscribe, unsubscribe, pushStatus, testPush, dispatchReminders } from './push.js';
 import { assistantAction } from './assistant-actions.js';
-import { handleKnown, interpret, analyzePhoto, CHAT_MODEL } from './conversation.js';
+import { handleKnown, interpret, analyzePhoto, CHAT_MODEL, VISION_MODEL } from './conversation.js';
 import { configuredOrigins, contentSecurityPolicy, canonicalHome } from './origins.js';
 import { assets } from '../generated/assets.js';
 
@@ -82,7 +82,7 @@ export default {
       if (!configuredOrigins(env,url.origin).includes(url.origin))return json({error:'This hostname is not configured for SCIapp.'},421);
       const canonical=canonicalHome(request,env);
       if(canonical)return new Response(null,{status:302,headers:{...security,Location:canonical}});
-      if (path === '/api/health') return json({ status: 'ok', version: '0.7.0', chatModel:CHAT_MODEL, mode: 'personal-beta' });
+      if (path === '/api/health') return json({ status: 'ok', version: '0.7.1', chatModel:CHAT_MODEL, visionModel:VISION_MODEL, mode: 'personal-beta' });
       if (path === '/api/config' && request.method === 'GET') return json({ appOrigin:env.APP_ORIGIN||url.origin, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null, authEnvironment: env.CLERK_PUBLISHABLE_KEY?.startsWith('pk_live_') ? 'production' : 'development', pushPublicKey:env.VAPID_PUBLIC_KEY||null, mode: env.CLERK_PUBLISHABLE_KEY ? 'authenticated' : 'preview', features: { notifications: !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY), memory:retrievalReady(env), resources:retrievalReady(env), medications:true, photos: true, transcription: !!env.AI, speech: false, caregivers: 'drafts', healthConnect: false }, notice: 'Personal care beta. Medication and allergy records are user-entered. Notifications are reminders, not guaranteed clinical alarms. Caregiver invitations remain drafts.' });
       if (!path.startsWith('/api/')) {
         if (!['GET','HEAD'].includes(request.method)) return json({ error: 'Method not allowed.' },405);
@@ -103,7 +103,7 @@ export default {
         await env.DB.prepare('INSERT INTO sessions(token_hash,account_id,expires_at) VALUES (?,?,?)').bind(await hash(token),id,Date.now()+7*86400000).run();
         return json({ state: publicState((await load(env,id)).state) },200,{ 'Set-Cookie': `__Host-sciapp=${token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=604800` });
       }
-      if(path.startsWith('/api/admin/'))return await adminRoute(request,env,ctx,{json,bodyJSON:r=>bodyJSON(r,600000),form,version:'0.7.0'});
+      if(path.startsWith('/api/admin/'))return await adminRoute(request,env,ctx,{json,bodyJSON:r=>bodyJSON(r,600000),form,version:'0.7.1'});
       const id = await user(request, env);
       if (path === '/api/state' && request.method === 'GET') return json(publicState((await load(env,id)).state));
       if (path === '/api/session' && request.method === 'DELETE') { const token=(request.headers.get('cookie')||'').match(/(?:^|;\s*)__Host-sciapp=([^;]+)/)?.[1]; if(token)await env.DB.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await hash(token)).run(); return json({ok:true},200,{'Set-Cookie':'__Host-sciapp=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0'}); }
@@ -144,7 +144,7 @@ export default {
         if ((!text && !data.photoId) || text.length>3000) throw new AppError('Enter a message up to 3,000 characters.');
         const {state,version}=await load(env,id);
         let photoData=null;
-        if(data.photoId) { attachmentOwner(state,data.photoId); await limit(request,env,'ai',60); const file=await env.PHOTOS.get(`${id}/${data.photoId}`); if(!file)throw new AppError('Photo no longer available.',404); try{photoData=await analyzePhoto(env,file,text);}catch{photoData={type:'other',notes:'AI could not read it reliably. You can enter the details.'};} }
+        if(data.photoId) { attachmentOwner(state,data.photoId); await limit(request,env,'ai',60); const file=await env.PHOTOS.get(`${id}/${data.photoId}`); if(!file)throw new AppError('Photo no longer available.',404); try{photoData=await analyzePhoto(env,file,text);}catch{console.warn(JSON.stringify({event:'photo_interpretation_failed',model:VISION_MODEL}));photoData={type:'other',notes:'The image-processing service did not complete. Your photo is saved; please retry or enter the reading.'};} }
         const userMessage=message('user',text||'Photo attached',data.photoId?{photoId:data.photoId,photoUrl:`/api/photos/${data.photoId}`}:{ });
         state.messages.push(userMessage);
         let reply;

@@ -20,3 +20,5 @@
 #messages{overflow:visible;overflow-anchor:none}.conversation,.message{overflow-anchor:none}
 .composer textarea{max-height:min(120px,18dvh);overflow-y:auto}
 @media(max-width:720px){.composer-area{padding-top:8px}.composer{padding-top:10px}.composer textarea{max-height:min(104px,16dvh)}.composer-hint{margin-top:6px;line-height:1.35}.input-tools{min-width:0;flex-wrap:wrap}.recording-status{flex-basis:100%;max-width:none}.composer-controls{align-items:flex-end}}
+
+.notification-help{font-size:14px;line-height:1.65;margin:14px 0;overflow-wrap:anywhere}.notification-help summary{cursor:pointer;font-weight:600;min-height:44px}.notification-help li{margin:10px 0}.notification-help a{display:inline-block;min-height:44px;padding:8px 0}
