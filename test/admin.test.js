@@ -18,7 +18,7 @@ test('administrator auth, CSRF, resource review workflow, archive retrieval, set
  const login=await req('/api/admin/login','POST',{username:'admin',password});assert.equal(login.status,200);assert.match(login.headers.get('set-cookie'),/Secure; HttpOnly; SameSite=Strict/);cookie=login.headers.get('set-cookie').split(';')[0];csrf=(await login.json()).csrfToken;
  assert.equal((await req('/api/state')).status,401);
  assert.equal((await req('/api/admin/settings','PUT',[])).status,400);
- const overview=await(await req('/api/admin/overview')).json();assert.equal(overview.memoryPolicy,'Always on for every signed-in user');assert.equal(overview.appVersion,'0.7.1');
+ const overview=await(await req('/api/admin/overview')).json();assert.equal(overview.memoryPolicy,'Always on for every signed-in user');assert.equal(overview.appVersion,'0.7.2');
  assert.equal((await req('/api/admin/settings','PUT',{version:0,settings:{retrievalThreshold:0.7,resourceReviewDays:90}},{'X-Admin-CSRF':''})).status,403);
  assert.equal((await req('/api/admin/settings','PUT',{version:0,settings:{retrievalThreshold:0.7,resourceReviewDays:90}})).status,200);
  assert.equal((await req('/api/admin/settings','PUT',{version:0,settings:{retrievalThreshold:0.7,resourceReviewDays:90}})).status,409);

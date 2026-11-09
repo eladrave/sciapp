@@ -1,4 +1,4 @@
-# Current status: personal care beta 0.7.1
+# Current status: personal care beta 0.7.2
 
 The primary domain is https://sciapp.eladrave.com, with the workers.dev origin retained for transition. Domain configuration and future migration steps are documented in domain-migration.md.
 
@@ -102,3 +102,9 @@ The photo workflow also accepts the chat model selecting record_vitals for an at
 Live 0.7.1 validation: the health endpoint reports Scout; anonymous personal API access still returns 401. A synthetic monitor image went through live upload, Scout extraction, chat tool selection and a photo-linked pending BP/pulse review. It recorded no event before approval. UI approval saved exactly one vital event with the original photo ID and preserved inventory. At 412 x 915, the image/review screen had no horizontal overflow. A separate isolated browser test with mocked identity, permission events and push provider validated denied-permission guidance and registration exactly once after a late grant, without requesting permission again or overflowing the mobile layout. This tests browser logic, not physical phone delivery. The test is preserved in test/browser/notifications.spec.js.
 
 The local Playwright suite could not launch because its Chromium headless executable is absent. The live/remote browser checks above are separate evidence; no local Playwright pass is claimed.
+
+## Image source selection, 0.7.2
+
+The conversation Photo button offers Take a photo and Upload image. Only the camera input requests environment capture. The image picker has no capture attribute, so Android can select existing JPEG, PNG or WebP images through Photos or Files. Both choices use the same private upload, interpretation and review flow, with a 5 MB limit. This does not add personal PDF/Word attachments to conversation; shared documents remain managed through the administrator resource portal.
+
+Validation: 63 automated tests, syntax checks and build passed. Remote browser verification at 412 x 915 confirmed the two choices invoke separate image inputs, upload has no capture attribute, camera retains environment capture, and a synthetic image reaches the existing upload/attachment preview with no horizontal overflow. Identity/state/upload responses were mocked for the UI check; it made no real care-record writes.

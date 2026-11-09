@@ -2,7 +2,7 @@ import { createChatScroll } from './chat-scroll.js';
 import { confirmationDelay } from './conversation-controls.js';
 import { notificationStatus, watchNotificationPermission, pendingNotificationEnable, permissionGuidance, enableNotifications, disableNotifications, detachBrowserNotifications, testNotification } from './notifications.js';
 const $ = (selector) => document.querySelector(selector);
-const ui = Object.fromEntries(['welcome','app','start-preview','sign-in','welcome-error','messages','message','composer','send','error','thinking','mute','mute-label','mute-icon','voice','voice-label','recording-status','photo','photo-input','attachment','attachment-image','attachment-status','remove-photo','panel','conversation','page-label','composer-area','avatar','date-label','composer-hint','account','announcer'].map(id => [id, document.getElementById(id)]));
+const ui = Object.fromEntries(['welcome','app','start-preview','sign-in','welcome-error','messages','message','composer','send','error','thinking','mute','mute-label','mute-icon','voice','voice-label','recording-status','photo','photo-input','camera-input','photo-options','take-photo','upload-image','attachment','attachment-image','attachment-status','remove-photo','panel','conversation','page-label','composer-area','avatar','date-label','composer-hint','account','announcer'].map(id => [id, document.getElementById(id)]));
 let state, config, activePage = 'Conversation', busy = false, photo = null, photoPreview, recorder, recordStream, recording = false, recognition, audioChunks = [], uploadBusy = false;
 let photoGeneration = 0, accountGeneration = 0, voiceGeneration = 0, silenceTimer, handsFreeRecognition, handsFreeRunning = false, assistantSpeaking = false, manualVoiceActive = false, handsFreePaused = false, speechGeneration = 0;
 const chatScroll = createChatScroll($('#main'),ui.messages,() => activePage === 'Conversation' && !ui.app.hidden);
@@ -37,7 +37,7 @@ async function api(path, options = {}) {
  return data;
  } finally { pendingRequests.delete(controller); }
 }
-function setBusy(value) { busy = value; ui.thinking.hidden = !value; ui.send.disabled = value || uploadBusy || recording; ui.message.readOnly = value; ui.composer.setAttribute('aria-busy',String(value)); ui.photo.disabled = value || uploadBusy; document.querySelectorAll('[data-action]').forEach(el => { el.disabled = value; }); }
+function setBusy(value) { busy = value; ui.thinking.hidden = !value; ui.send.disabled = value || uploadBusy || recording; ui.message.readOnly = value; ui.composer.setAttribute('aria-busy',String(value)); ui.photo.disabled = value || uploadBusy; ui['take-photo'].disabled = ui['upload-image'].disabled = value || uploadBusy; if(value || uploadBusy)closePhotoOptions(); document.querySelectorAll('[data-action]').forEach(el => { el.disabled = value; }); }
 function showApp(next) { ui.welcome.hidden = true; ui.app.hidden = false; update(next); resumeHandsFree(); refreshNotificationStatus(); if (new URL(location.href).searchParams.get('page') === 'Today') switchPage('Today'); }
 function update(next) {
  if (next) {
@@ -254,7 +254,7 @@ async function notificationAction(action,{resume=false}={}) {
 }
 async function undo(id) { if (busy) return; const generation = accountGeneration; setBusy(true); error(); stopHandsFree(); try { const result = await api(`/api/events/${encodeURIComponent(id)}/undo`,{method:'POST'}); receive(result); } catch(e) { if(e.name !== 'AbortError') error(e.message); } finally { if(generation === accountGeneration) {setBusy(false); focusComposer(); resumeHandsFree();} } }
 function removePhoto({deleteRemote = true} = {}) {
- const previous = photo; photo = null; if (photoPreview) URL.revokeObjectURL(photoPreview); photoPreview = null; ui.attachment.hidden = true; ui['photo-input'].value = ''; ui['attachment-image'].removeAttribute('src');
+ const previous = photo; photo = null; if (photoPreview) URL.revokeObjectURL(photoPreview); photoPreview = null; ui.attachment.hidden = true; ui['photo-input'].value = ''; ui['camera-input'].value = ''; ui['attachment-image'].removeAttribute('src');
  if(deleteRemote && previous) api(`/api/photos/${encodeURIComponent(previous.id)}`,{method:'DELETE'}).catch(e => {if(e.name !== 'AbortError') error('The photo was detached, but could not be deleted. Please try again.');});
 }
 async function deleteSavedPhoto(id) { if(busy) return; const generation = accountGeneration; setBusy(true); try { await api(`/api/photos/${encodeURIComponent(id)}`,{method:'DELETE'}); state.photos = state.photos.filter(photo => photo.id !== id); for(const message of state.messages) if(message.photoId === id) { delete message.photoId; delete message.photoUrl; } update(state); ui.announcer.textContent = 'Photo deleted.'; } catch(e) {if(e.name !== 'AbortError') error(e.message);} finally {if(generation === accountGeneration) {setBusy(false); focusComposer();}} }
@@ -349,14 +349,20 @@ ui.composer.addEventListener('submit',event => { event.preventDefault(); send();
 ui.message.addEventListener('keydown',event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); send(); } });
 ui.message.addEventListener('input',() => {ui.message.style.height = 'auto'; ui.message.style.height = `${Math.min(ui.message.scrollHeight,140)}px`;});
 ui.mute.addEventListener('click',() => { setMute(!muted); if (activePage === 'Settings') renderPanel(); });
-ui.photo.addEventListener('click',() => ui['photo-input'].click()); ui['photo-input'].addEventListener('change',() => uploadPhoto(ui['photo-input'].files[0])); ui['remove-photo'].addEventListener('click',() => removePhoto()); ui.voice.addEventListener('click',toggleVoice);
+function closePhotoOptions() { ui['photo-options'].hidden = true; ui.photo.setAttribute('aria-expanded','false'); }
+ui.photo.addEventListener('click',() => { const open=ui['photo-options'].hidden; ui['photo-options'].hidden=!open; ui.photo.setAttribute('aria-expanded',String(open)); });
+ui['take-photo'].addEventListener('click',() => { closePhotoOptions(); ui['camera-input'].click(); });
+ui['upload-image'].addEventListener('click',() => { closePhotoOptions(); ui['photo-input'].click(); });
+ui['photo-input'].addEventListener('change',() => uploadPhoto(ui['photo-input'].files[0]));
+ui['camera-input'].addEventListener('change',() => uploadPhoto(ui['camera-input'].files[0]));
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!ui['photo-options'].hidden){closePhotoOptions();ui.photo.focus();}}); ui['remove-photo'].addEventListener('click',() => removePhoto()); ui.voice.addEventListener('click',toggleVoice);
 ui['start-preview'].addEventListener('click',async () => { ui['start-preview'].disabled = true; ui['start-preview'].textContent = 'Opening your space…'; ui['welcome-error'].textContent = ''; try { await api('/api/session',{method:'POST'}); showApp(await api('/api/state')); } catch(e) { ui['welcome-error'].textContent = e.message; } finally { ui['start-preview'].disabled = false; ui['start-preview'].textContent = 'Start private preview ↗'; } });
 ui.account.addEventListener('click',async () => {
  if (window.Clerk?.session) {
   try { await api('/api/session',{method:'DELETE'}); await window.sciappSignOut(); showWelcomeAfterSignOut(); } catch(e) {error(e.message);}
  } else if (config?.clerkPublishableKey) await window.sciappSignIn();
 });
-function clearAccountWork() { chatScroll.reset(); notificationBusy = false; pushServerStatus = null; pushStatus = {supported:false,enabled:false,permission:'unknown'}; accountGeneration++; voiceGeneration++; pendingRequests.forEach(controller => controller.abort()); pendingRequests.clear(); clearTimeout(approvalTimer); stopHandsFree(); handsFreePaused = false; if(recognition) {recognition.onend = null; recognition.abort(); recognition = null;} if(recorder?.state === 'recording') recorder.stop(); recorder = null; audioChunks = []; recordStream?.getTracks().forEach(track => track.stop()); resetRecording(); assistantSpeaking = false; window.speechSynthesis?.cancel(); uploadBusy = false; setBusy(false); revokeHistoricalPhotos(); removePhoto({deleteRemote:false}); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; ui.announcer.textContent = ''; ui.app.hidden = true; ui.welcome.hidden = false; switchPage('Conversation'); }
+function clearAccountWork() { closePhotoOptions(); chatScroll.reset(); notificationBusy = false; pushServerStatus = null; pushStatus = {supported:false,enabled:false,permission:'unknown'}; accountGeneration++; voiceGeneration++; pendingRequests.forEach(controller => controller.abort()); pendingRequests.clear(); clearTimeout(approvalTimer); stopHandsFree(); handsFreePaused = false; if(recognition) {recognition.onend = null; recognition.abort(); recognition = null;} if(recorder?.state === 'recording') recorder.stop(); recorder = null; audioChunks = []; recordStream?.getTracks().forEach(track => track.stop()); resetRecording(); assistantSpeaking = false; window.speechSynthesis?.cancel(); uploadBusy = false; setBusy(false); revokeHistoricalPhotos(); removePhoto({deleteRemote:false}); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; ui.announcer.textContent = ''; ui.app.hidden = true; ui.welcome.hidden = false; switchPage('Conversation'); }
 function showWelcomeAfterSignOut() {
  clearAccountWork(); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; window.speechSynthesis?.cancel(); ui.app.hidden = true; ui.welcome.hidden = false; ui.account.hidden = true;
 }
