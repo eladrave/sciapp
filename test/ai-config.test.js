@@ -39,3 +39,9 @@ test('Chat Completions preserves tool calls, image messages, and omits unsupport
  globalThis.fetch=async(url,options)=>{assert.equal(url,'https://provider.example/v1/chat/completions');const body=JSON.parse(options.body);assert.equal(body.reasoning_effort,undefined);assert.equal(body.tools[0].function.name,'manage_care_plan');return Response.json({choices:[{finish_reason:'tool_calls',message:{tool_calls:[{function:{name:'manage_care_plan',arguments:'{}'}}]}}]});};
  try{const result=await chatResponse(env,{messages:[{role:'user',content:'Set my schedule'}],tools:[{name:'manage_care_plan',parameters:{type:'object'}}]});assert.equal(result.tool_calls[0].function.name,'manage_care_plan');}finally{globalThis.fetch=original;}
 });
+
+test('Anthropic discovery includes its required API version header',async()=>{
+ const {discoverModels}=await import('../worker/ai-config.js');const original=globalThis.fetch;
+ globalThis.fetch=async(url,options)=>{assert.equal(url,'https://api.anthropic.com/v1/models');assert.equal(options.headers['anthropic-version'],'2023-06-01');return Response.json({data:[{id:'claude-haiku-5-5'}]});};
+ try{const result=await discoverModels({}, {...aiDefaults,baseUrl:'https://api.anthropic.com/v1'},'synthetic-key');assert.deepEqual(result.models,['claude-haiku-5-5']);}finally{globalThis.fetch=original;}
+});
