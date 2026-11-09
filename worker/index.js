@@ -1,3 +1,4 @@
+import { healthRoute, completeConnection, healthContext, processHealthJobs, healthMaintenance, listConnections, listRecords } from './health-systems.js';
 import { retrievalReady, memoryChat, listMemory, forgetMemory, retrieveContext, archiveMessages, backfillMemory, processIndexJobs, seedResources, syncMemoryAccounts, resourceAdmin, addResource } from './retrieval.js';
 import { executeCareTool, offlineCareReply } from './chat-tools.js';
 import { processTranscriptions } from './resource-transcription.js';
@@ -75,15 +76,15 @@ async function limit(request, env, scope, max) {
 function attachmentOwner(state, photoId) { if (typeof photoId !== 'string' || !state.photos.some(p => p.id === photoId)) throw new AppError('Photo not found.', 404); }
 
 export default {
-  async scheduled(controller,env,ctx) { ctx.waitUntil(dispatchReminders(env,controller.scheduledTime)); ctx.waitUntil(processTranscriptions(env)); ctx.waitUntil((async()=>{if(retrievalReady(env)){await seedResources(env);await syncMemoryAccounts(env);await processIndexJobs(env,8);}})()); },
+  async scheduled(controller,env,ctx) { if(env.HEALTH_TOKEN_KEY)ctx.waitUntil(healthMaintenance(env)); ctx.waitUntil(dispatchReminders(env,controller.scheduledTime)); ctx.waitUntil(processTranscriptions(env)); ctx.waitUntil((async()=>{if(retrievalReady(env)){await seedResources(env);await syncMemoryAccounts(env);await processIndexJobs(env,8);}})()); },
   async fetch(request, env, ctx) {
     const url = new URL(request.url); const path = url.pathname;
     try {
       if (!configuredOrigins(env,url.origin).includes(url.origin))return json({error:'This hostname is not configured for SCIapp.'},421);
       const canonical=canonicalHome(request,env);
       if(canonical)return new Response(null,{status:302,headers:{...security,Location:canonical}});
-      if (path === '/api/health') return json({ status: 'ok', version: '0.7.2', chatModel:CHAT_MODEL, visionModel:VISION_MODEL, mode: 'personal-beta' });
-      if (path === '/api/config' && request.method === 'GET') return json({ appOrigin:env.APP_ORIGIN||url.origin, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null, authEnvironment: env.CLERK_PUBLISHABLE_KEY?.startsWith('pk_live_') ? 'production' : 'development', pushPublicKey:env.VAPID_PUBLIC_KEY||null, mode: env.CLERK_PUBLISHABLE_KEY ? 'authenticated' : 'preview', features: { notifications: !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY), memory:retrievalReady(env), resources:retrievalReady(env), medications:true, photos: true, transcription: !!env.AI, speech: false, caregivers: 'drafts', healthConnect: false }, notice: 'Personal care beta. Medication and allergy records are user-entered. Notifications are reminders, not guaranteed clinical alarms. Caregiver invitations remain drafts.' });
+      if (path === '/api/health') return json({ status: 'ok', version: '0.8.0', chatModel:CHAT_MODEL, visionModel:VISION_MODEL, mode: 'personal-beta' });
+      if (path === '/api/config' && request.method === 'GET') return json({ appOrigin:env.APP_ORIGIN||url.origin, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null, authEnvironment: env.CLERK_PUBLISHABLE_KEY?.startsWith('pk_live_') ? 'production' : 'development', pushPublicKey:env.VAPID_PUBLIC_KEY||null, mode: env.CLERK_PUBLISHABLE_KEY ? 'authenticated' : 'preview', features: { notifications: !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY), memory:retrievalReady(env), resources:retrievalReady(env), medications:true, photos: true, transcription: !!env.AI, speech: false, caregivers: 'drafts', healthSystems:!!env.HEALTH_TOKEN_KEY, healthConnect: false }, notice: 'Personal care beta. Medication and allergy records are user-entered. Notifications are reminders, not guaranteed clinical alarms. Caregiver invitations remain drafts.' });
       if (!path.startsWith('/api/')) {
         if (!['GET','HEAD'].includes(request.method)) return json({ error: 'Method not allowed.' },405);
         const asset = assets[({ '/':'/index.html', '/privacy':'/privacy.html', '/terms':'/terms.html', '/admin':'/admin.html', '/admin/':'/admin.html' })[path] || path];
@@ -103,8 +104,13 @@ export default {
         await env.DB.prepare('INSERT INTO sessions(token_hash,account_id,expires_at) VALUES (?,?,?)').bind(await hash(token),id,Date.now()+7*86400000).run();
         return json({ state: publicState((await load(env,id)).state) },200,{ 'Set-Cookie': `__Host-sciapp=${token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=604800` });
       }
-      if(path.startsWith('/api/admin/'))return await adminRoute(request,env,ctx,{json,bodyJSON:r=>bodyJSON(r,600000),form,version:'0.7.2'});
+      if(path.startsWith('/api/admin/'))return await adminRoute(request,env,ctx,{json,bodyJSON:r=>bodyJSON(r,600000),form,version:'0.8.0'});
+      if(path==='/api/health-systems/callback'&&request.method==='GET'){
+        if(!env.HEALTH_TOKEN_KEY)throw new AppError('Health connections are not configured.',503);
+        const result=await completeConnection(env,request);return new Response(null,{status:303,headers:{...security,Location:env.APP_ORIGIN+'/?health='+(result.cancelled?'cancelled':'connected'),'Set-Cookie':result.cookie}});
+      }
       const id = await user(request, env);
+      if(path.startsWith('/api/health-systems/')){if(!env.HEALTH_TOKEN_KEY)throw new AppError('Health connections are not configured.',503);await limit(request,env,'health-systems',300);return await healthRoute(request,env,id,{json,bodyJSON,ctx});}
       if (path === '/api/state' && request.method === 'GET') return json(publicState((await load(env,id)).state));
       if (path === '/api/session' && request.method === 'DELETE') { const token=(request.headers.get('cookie')||'').match(/(?:^|;\s*)__Host-sciapp=([^;]+)/)?.[1]; if(token)await env.DB.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await hash(token)).run(); return json({ok:true},200,{'Set-Cookie':'__Host-sciapp=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0'}); }
       if (path.startsWith('/api/push/')) {
@@ -133,7 +139,7 @@ export default {
         const target=path.match(/^\/api\/memory\/(m-[a-f0-9]+)$/);if(target&&request.method==='DELETE'){await forgetMemory(env,id,target[1]);ctx.waitUntil(processIndexJobs(env));return json({ok:true});}
         if(path==='/api/memory/search' && request.method==='POST'){await limit(request,env,'memory-search',50);const data=await bodyJSON(request);if(typeof data.query!=='string'||!data.query.trim()||data.query.length>2000)throw new AppError('Enter a search up to 2,000 characters.');return json(await retrieveContext(env,id,data.query));}
       }
-      if(path==='/api/account/export'&&request.method==='GET')return json({...publicState((await load(env,id)).state),...(retrievalReady(env)&&id.startsWith('clerk:')?{personalMemory:await listMemory(env,id,true)}:{})},200,{'Content-Disposition':'attachment; filename="sciapp-records.json"'});
+      if(path==='/api/account/export'&&request.method==='GET')return json({...publicState((await load(env,id)).state),...(env.HEALTH_TOKEN_KEY&&id.startsWith('clerk:')?{healthConnections:await listConnections(env,id),importedHealthRecords:await listRecords(env,id)}:{}),...(retrievalReady(env)&&id.startsWith('clerk:')?{personalMemory:await listMemory(env,id,true)}:{})},200,{'Content-Disposition':'attachment; filename="sciapp-records.json"'});
       const action = path.match(/^\/api\/actions\/([a-f0-9-]+)$/);
       if (action && request.method === 'POST') { const data=await bodyJSON(request); return json(await mutate(env,id,s=>finishProposal(s,action[1],data.decision))); }
       const undo = path.match(/^\/api\/events\/([a-f0-9-]+)\/undo$/);
@@ -150,11 +156,11 @@ export default {
         let reply;
         if(env.AI){
           await limit(request,env,'ai',150);
-          try{let context={sources:[]};try{context=await retrieveContext(env,id,text);}catch{console.warn(JSON.stringify({event:'retrieval_unavailable'}));}
-            const interpreted=await interpret(env,state,text,{memories:context.memories||[],sources:(context.sources||[]).map(s=>({...s,text:s.body})),photoData});
+          try{let context={sources:[]}; const health=await healthContext(env,id);try{context=await retrieveContext(env,id,text);}catch{console.warn(JSON.stringify({event:'retrieval_unavailable'}));}
+            const interpreted=await interpret(env,state,text,{memories:context.memories||[],sources:(context.sources||[]).map(s=>({...s,text:s.body})),photoData,health});
             if(interpreted.kind==='tool'){
               reply=await executeCareTool(env,id,state,text,interpreted.tool,photoData,data.photoId);
-              if(reply.toolError){const retry=await interpret(env,state,text,{memories:context.memories||[],sources:(context.sources||[]).map(s=>({...s,text:s.body})),photoData,toolFeedback:{tool:interpreted.tool.name,error:reply.toolError}});if(retry.kind==='tool')reply=await executeCareTool(env,id,state,text,retry.tool,photoData,data.photoId);else if(retry.kind==='reply'&&retry.content)reply=message('assistant',retry.content,{sources:retry.sources||[]});}
+              if(reply.toolError){const retry=await interpret(env,state,text,{memories:context.memories||[],sources:(context.sources||[]).map(s=>({...s,text:s.body})),photoData,health,toolFeedback:{tool:interpreted.tool.name,error:reply.toolError}});if(retry.kind==='tool')reply=await executeCareTool(env,id,state,text,retry.tool,photoData,data.photoId);else if(retry.kind==='reply'&&retry.content)reply=message('assistant',retry.content,{sources:retry.sources||[]});}
             }
             else if(interpreted.kind==='action'&&interpreted.action)reply=assistantAction(state,text,interpreted.action);
             else reply=message('assistant',String(interpreted.content||'What would you like to do?').slice(0,4000),{sources:interpreted.sources||[],options:['Log catheterization','Set catheter reminders','Settings']});
@@ -162,6 +168,7 @@ export default {
         }else reply=offlineCareReply(state,text,photoData,data.photoId);
         if(reply?.bagReading)reply=proposal(state,'bag',reply.bagReading);
 
+        if(reply?.healthJob)ctx.waitUntil(processHealthJobs(env));
         delete reply.toolError;state.messages.push(reply); await store(env,id,state,version);
         ctx.waitUntil((async()=>{try{await backfillMemory(env,id,state);await archiveMessages(env,id,[userMessage]);await processIndexJobs(env);}catch{console.warn(JSON.stringify({event:'memory_archive_retry_needed'}));}})());
         return json({reply,state:publicState(state)});

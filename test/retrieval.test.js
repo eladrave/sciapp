@@ -8,7 +8,7 @@ import { ownerNamespace, backfillMemory, archiveMessages, processIndexJobs, retr
 test('private semantic retrieval enforces namespace and D1 owner checks, always-on memory, deletion and retry',async()=>{
  const mf=new Miniflare({workers:[{config:{name:'test',compatibilityDate:'2026-11-08',env:{DB:{type:'d1',id:'DB'}},manifest:{mainModule:'worker.js',modules:{'worker.js':{type:'esm',contents:'export default {fetch(){return new Response("ok")}}'}}}}}]});
  try{
- const db=await mf.getD1Database('DB');for(const name of ['0001_initial.sql','0004_retrieval.sql','0005_admin.sql','0006_resource_files.sql','0007_resource_transcription.sql'])await db.exec((await readFile(`migrations/${name}`,'utf8')).replace(/\n/g,' '));
+ const db=await mf.getD1Database('DB');for(const name of ['0001_initial.sql','0004_retrieval.sql','0005_admin.sql','0006_resource_files.sql','0007_resource_transcription.sql','0008_health_systems.sql'])await db.exec((await readFile(`migrations/${name}`,'utf8')).replace(/\n/g,' '));
  for(const id of ['clerk:a','clerk:b'])await db.prepare('INSERT INTO accounts VALUES(?,?,0,?)').bind(id,JSON.stringify(initialState({real:true})),new Date().toISOString()).run();
  let fail=false;const records=new Map(),deleted=[],queries=[];
  const index={upsert:async rows=>{if(fail)throw Error('temporary');for(const r of rows)records.set(r.id,r);},deleteByIds:async ids=>{for(const id of ids){records.delete(id);deleted.push(id);}},query:async(vector,opts)=>{queries.push(opts);return{matches:[...records.keys()].map(id=>({id,score:0.9}))};}};

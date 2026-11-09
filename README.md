@@ -4,7 +4,7 @@ Accessible conversational care companion for people with spinal cord injuries.
 
 ## Status
 
-Personal care beta at **https://sciapp.eladrave.com** (0.7.2).
+Personal care beta at **https://sciapp.eladrave.com** (0.8.0).
 
 Clerk identities own isolated records in Cloudflare D1. Signed-in accounts have their own medications, allergies, inventory, settings, and confirmed care journal. The separate seven-day sample preview remains available. Production Clerk and Google sign-in are active. This remains a personal-care beta, not a completed production healthcare qualification.
 
@@ -91,3 +91,5 @@ Admin resources also accept private original files (up to 10 MB) and video URLs 
 Uploaded MP3/WAV/M4A/MP4/WebM/OGG/FLAC can generate background speech transcripts through Cloudflare Workers AI. Pending jobs survive page closure; publication still requires review. Video page URLs are not automatically downloaded.
 
 Chat messages now reach the Llama 3.3 70B model first, using native typed care tools. Backend validation and review still gate writes; deterministic parsing is a tool validator/offline fallback, not the primary router. Catheter reminders support explicit daily wall-clock times across midnight as well as intervals. See docs/conversation-tools.md.
+
+Health system integrations: [setup, supported tools and current activation requirements](docs/health-systems.md). Patient-authorized hospital connections require vendor registration before real data access.

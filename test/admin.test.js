@@ -9,7 +9,7 @@ test('administrator auth, CSRF, resource review workflow, archive retrieval, set
  const verifier=JSON.stringify({salt:Buffer.from(salt).toString('hex'),hash:Buffer.from(derived).toString('hex'),iterations:100000});
  const mf=new Miniflare({workers:[{config:{name:'sciapp',compatibilityDate:'2026-11-08',compatibilityFlags:['nodejs_compat'],env:{DB:{type:'d1',id:'DB'},RESOURCES:{type:'r2',name:'RESOURCES'},ADMIN_PASSWORD_HASH:{type:'text',value:verifier}},manifest:{mainModule:'worker.js',modulesRoot:process.cwd(),modules:{'worker.js':{type:'esm',contents:await readFile('dist/worker.js','utf8')}}}}}]});
  try{
- const db=await mf.getD1Database('DB');for(const name of ['0001_initial.sql','0002_notifications.sql','0003_account_identities.sql','0004_retrieval.sql','0005_admin.sql','0006_resource_files.sql','0007_resource_transcription.sql'])await db.exec((await readFile('migrations/'+name,'utf8')).replace(/\n/g,' '));
+ const db=await mf.getD1Database('DB');for(const name of ['0001_initial.sql','0002_notifications.sql','0003_account_identities.sql','0004_retrieval.sql','0005_admin.sql','0006_resource_files.sql','0007_resource_transcription.sql','0008_health_systems.sql'])await db.exec((await readFile('migrations/'+name,'utf8')).replace(/\n/g,' '));
  let cookie='',csrf='';const req=async(path,method='GET',body,extra={})=>{let payload=body?JSON.stringify(body):undefined;const headers={...(cookie?{cookie}:{}),...(method!=='GET'?{origin:'https://sciapp.test','content-type':'application/json','X-Admin-CSRF':csrf}:{}),...extra};if(body instanceof FormData){const encoded=new Response(body);payload=await encoded.arrayBuffer();headers['content-type']=encoded.headers.get('content-type');}return mf.dispatchFetch('https://sciapp.test'+path,{method,headers,...(payload?{body:payload}:{})});};
  assert.equal((await req('/admin')).status,200);assert.equal((await req('/api/admin/resources')).status,401);
  assert.equal((await req('/api/admin/login','POST',{username:'admin',password},{origin:'https://evil.test'})).status,403);
@@ -18,7 +18,10 @@ test('administrator auth, CSRF, resource review workflow, archive retrieval, set
  const login=await req('/api/admin/login','POST',{username:'admin',password});assert.equal(login.status,200);assert.match(login.headers.get('set-cookie'),/Secure; HttpOnly; SameSite=Strict/);cookie=login.headers.get('set-cookie').split(';')[0];csrf=(await login.json()).csrfToken;
  assert.equal((await req('/api/state')).status,401);
  assert.equal((await req('/api/admin/settings','PUT',[])).status,400);
- const overview=await(await req('/api/admin/overview')).json();assert.equal(overview.memoryPolicy,'Always on for every signed-in user');assert.equal(overview.appVersion,'0.7.2');
+ assert.equal((await req('/api/admin/health-clients/epic','PUT',{clientId:'synthetic-client',authMethod:'none'},{'X-Admin-CSRF':''})).status,403);
+ assert.equal((await req('/api/admin/health-clients/epic','PUT',{clientId:'synthetic-client',authMethod:'none'})).status,200);
+ const registration=await(await req('/api/admin/health-clients')).json();assert.equal(registration.clients[0].client_id,'synthetic-client');assert.equal(JSON.stringify(registration).includes('secret_cipher'),false);
+ const overview=await(await req('/api/admin/overview')).json();assert.equal(overview.memoryPolicy,'Always on for every signed-in user');assert.equal(overview.appVersion,'0.8.0');
  assert.equal((await req('/api/admin/settings','PUT',{version:0,settings:{retrievalThreshold:0.7,resourceReviewDays:90}},{'X-Admin-CSRF':''})).status,403);
  assert.equal((await req('/api/admin/settings','PUT',{version:0,settings:{retrievalThreshold:0.7,resourceReviewDays:90}})).status,200);
  assert.equal((await req('/api/admin/settings','PUT',{version:0,settings:{retrievalThreshold:0.7,resourceReviewDays:90}})).status,409);

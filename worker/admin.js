@@ -1,3 +1,5 @@
+import { configureClient, clientStatus } from './health-systems.js';
+import { refreshDirectory } from './health-providers.js';
 import { processTranscriptions } from './resource-transcription.js';
 import { uploadResource, materialInput, resourceDownload, MAX_FILE_BYTES } from './resource-files.js';
 import { AppError, now, uid } from './domain.js';
@@ -47,6 +49,10 @@ export async function adminRoute(request,env,ctx,{json,bodyJSON,form,version}){
  }
  const admin=await session(request,env);if(!admin)throw new AppError('Administrator sign-in required.',401);
  if(mutation&&!await equal(request.headers.get('X-Admin-CSRF')||'',admin.csrf_token))throw new AppError('Refresh the admin page before trying again.',403);
+ if(path==='/api/admin/health-clients'&&request.method==='GET')return json(await clientStatus(env));
+ if(path==='/api/admin/health-directory'&&request.method==='POST'){const count=await refreshDirectory(env,fetch,true);await audit(env,'health_directory_refresh').run();return json({count});}
+ const healthClient=path.match(/^\/api\/admin\/health-clients\/(epic|epic-sandbox|oracle)$/);
+ if(healthClient&&request.method==='PUT'){const result=await configureClient(env,healthClient[1],await bodyJSON(request));await audit(env,'health_client_configuration',healthClient[1]).run();return json(result);}
  if(path==='/api/admin/session'&&request.method==='GET')return json({username:'admin',csrfToken:admin.csrf_token});
  if(path==='/api/admin/logout'&&request.method==='POST'){await env.DB.batch([env.DB.prepare('DELETE FROM admin_sessions WHERE token_hash=?').bind(admin.token_hash),audit(env,'logout')]);return json({ok:true},200,{'Set-Cookie':cookie('')});}
  if(path==='/api/admin/uploads'&&request.method==='POST'){

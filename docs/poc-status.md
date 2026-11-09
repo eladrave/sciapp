@@ -1,4 +1,4 @@
-# Current status: personal care beta 0.7.2
+# Current status: personal care beta 0.8.0
 
 The primary domain is https://sciapp.eladrave.com, with the workers.dev origin retained for transition. Domain configuration and future migration steps are documented in domain-migration.md.
 
@@ -36,7 +36,7 @@ Catheter reminders fire once when due, then await another confirmed catheterizat
 
 The existing Clerk application is claimed as sciapp in the owner’s workspace. The production instance is active at sciapp.eladrave.com, with its own Google OAuth client and External / In production audience. DNS is verified and both certificates are issued. The user explicitly approved copying the verified owner identity into production and linking it to its original account. One real owner was imported and mapped; a stale orphan account was retained without import. Runtime keys were switched together, with existing D1/R2 ownership preserved. Development credentials remain private for rollback.
 
-Caregiver invitations remain drafts, without messages or access grants. No EHR/Health Connect/Bluetooth, native Android alarms, offline record synchronization, clinical monitoring, or WhatsApp connection exists. Public privacy and usage pages now describe the implemented beta behavior. Formal privacy/security/service-term review, account deletion UX, restore testing and wider load/operational qualification remain launch work. The app is a personal beta, not a fully qualified healthcare production service.
+Caregiver invitations remain drafts, without messages or access grants. Patient-authorized EHR integration is implemented but requires vendor activation; see health-systems.md. No Android Health Connect/Bluetooth, native Android alarms, offline record synchronization, clinical monitoring, or WhatsApp connection exists. Public privacy and usage pages now describe the implemented beta behavior. Formal privacy/security/service-term review, account deletion UX, restore testing and wider load/operational qualification remain launch work. The app is a personal beta, not a fully qualified healthcare production service.
 
 Personal photos stay private in R2 and are experimental inputs requiring review. Urine appearance cannot establish or exclude UTI; image volume accuracy has not been validated for specific bags. Starter retrieval remains a small curated summary collection with primary-resource links, not a complete medical knowledge base.
 
@@ -108,3 +108,9 @@ The local Playwright suite could not launch because its Chromium headless execut
 The conversation Photo button offers Take a photo and Upload image. Only the camera input requests environment capture. The image picker has no capture attribute, so Android can select existing JPEG, PNG or WebP images through Photos or Files. Both choices use the same private upload, interpretation and review flow, with a 5 MB limit. This does not add personal PDF/Word attachments to conversation; shared documents remain managed through the administrator resource portal.
 
 Validation: 63 automated tests, syntax checks and build passed. Remote browser verification at 412 x 915 confirmed the two choices invoke separate image inputs, upload has no capture attribute, camera retains environment capture, and a synthetic image reaches the existing upload/attachment preview with no horizontal overflow. Identity/state/upload responses were mocked for the UI check; it made no real care-record writes.
+
+## Patient-authorized health systems, 0.8.0
+
+The app now implements multiple read-only SMART on FHIR connections with patient authorization, encrypted credentials, a locally cached official Epic organization directory, Jackson/Oracle provider configuration, isolated source records, queued manual imports, optional reviewed background sync, review-only medication adoption, disconnect and deletion controls. Eleven model tools cover discovery, connection/status, sync, source review and changes. Administrator Settings accepts vendor-issued registration credentials. See health-systems.md for authoritative procedures, limits and tests.
+
+Vendor registrations are not yet configured, so no real patient connection or hospital-data import is claimed. Jackson’s published Oracle patient endpoint did not resolve in the remote browser check. Real Epic sandbox discovery and a live Llama native-tool selection succeeded. 71 automated tests pass with synthetic OAuth/FHIR integration coverage; existing care data and notification configuration remain separate.

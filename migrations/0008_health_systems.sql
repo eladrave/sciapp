@@ -1,0 +1,11 @@
+CREATE TABLE IF NOT EXISTS health_providers(id TEXT PRIMARY KEY,name TEXT NOT NULL,vendor TEXT NOT NULL,issuer TEXT NOT NULL,source_url TEXT NOT NULL,updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS health_clients(vendor TEXT PRIMARY KEY,client_id TEXT NOT NULL,secret_cipher TEXT,auth_method TEXT NOT NULL DEFAULT 'none',updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS health_oauth_states(state_hash TEXT PRIMARY KEY,account_id TEXT NOT NULL,provider_id TEXT NOT NULL,cookie_hash TEXT NOT NULL,payload_cipher TEXT NOT NULL,expires_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS health_connections(id TEXT PRIMARY KEY,account_id TEXT NOT NULL,provider_id TEXT NOT NULL,patient_id TEXT NOT NULL,status TEXT NOT NULL,token_cipher TEXT,scopes TEXT NOT NULL DEFAULT '',expires_at INTEGER NOT NULL DEFAULT 0,auto_sync INTEGER NOT NULL DEFAULT 0,last_sync_at INTEGER,last_error TEXT,lease_until INTEGER NOT NULL DEFAULT 0,revision INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL,UNIQUE(account_id,provider_id));
+CREATE INDEX IF NOT EXISTS health_connections_owner ON health_connections(account_id);
+CREATE TABLE IF NOT EXISTS health_records(id TEXT PRIMARY KEY,account_id TEXT NOT NULL,connection_id TEXT NOT NULL REFERENCES health_connections(id),resource_type TEXT NOT NULL,resource_id TEXT NOT NULL,summary_json TEXT NOT NULL,resource_cipher TEXT NOT NULL,source_updated TEXT,imported_at INTEGER NOT NULL,UNIQUE(connection_id,resource_type,resource_id));
+CREATE INDEX IF NOT EXISTS health_records_owner ON health_records(account_id,connection_id,resource_type);
+CREATE TABLE IF NOT EXISTS health_reviews(id TEXT PRIMARY KEY,account_id TEXT NOT NULL,connection_id TEXT NOT NULL,action TEXT NOT NULL,payload_json TEXT NOT NULL,expires_at INTEGER NOT NULL,status TEXT NOT NULL DEFAULT 'pending');
+CREATE TABLE IF NOT EXISTS health_jobs(id TEXT PRIMARY KEY,account_id TEXT NOT NULL,connection_id TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'queued',created_at INTEGER NOT NULL,completed_at INTEGER,error TEXT);
+CREATE INDEX IF NOT EXISTS health_jobs_pending ON health_jobs(status,created_at);
+CREATE TABLE IF NOT EXISTS health_meta(id TEXT PRIMARY KEY,value TEXT NOT NULL,updated_at INTEGER NOT NULL);

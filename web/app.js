@@ -1,3 +1,4 @@
+import { createHealthUI } from './health-systems.js';
 import { createChatScroll } from './chat-scroll.js';
 import { confirmationDelay } from './conversation-controls.js';
 import { notificationStatus, watchNotificationPermission, pendingNotificationEnable, permissionGuidance, enableNotifications, disableNotifications, detachBrowserNotifications, testNotification } from './notifications.js';
@@ -20,6 +21,7 @@ const icons = {
 };
 function node(tag, className, text) { const el = document.createElement(tag); if (className) el.className = className; if (text !== undefined) el.textContent = text; return el; }
 function button(text, className, handler) { const el = node('button', className, text); el.type = 'button'; el.addEventListener('click', handler); return el; }
+const healthUI=createHealthUI({api,node,button,send,error});
 function focusComposer(explicit = false) { if (!ui.app.hidden && (!state?.settings?.handsFree || explicit) && (explicit || document.activeElement === ui.message)) ui.message.focus({preventScroll:true}); }
 function error(message) { ui.error.textContent = message || ''; ui.error.hidden = !message; }
 async function api(path, options = {}) {
@@ -38,7 +40,7 @@ async function api(path, options = {}) {
  } finally { pendingRequests.delete(controller); }
 }
 function setBusy(value) { busy = value; ui.thinking.hidden = !value; ui.send.disabled = value || uploadBusy || recording; ui.message.readOnly = value; ui.composer.setAttribute('aria-busy',String(value)); ui.photo.disabled = value || uploadBusy; ui['take-photo'].disabled = ui['upload-image'].disabled = value || uploadBusy; if(value || uploadBusy)closePhotoOptions(); document.querySelectorAll('[data-action]').forEach(el => { el.disabled = value; }); }
-function showApp(next) { ui.welcome.hidden = true; ui.app.hidden = false; update(next); resumeHandsFree(); refreshNotificationStatus(); if (new URL(location.href).searchParams.get('page') === 'Today') switchPage('Today'); }
+function showApp(next) { const healthResult=new URL(location.href).searchParams.get('health');if(healthResult){error(healthResult==='connected'?'Health system authorized. Ask to sync your health records.':'Health system connection cancelled.');history.replaceState(null,'',location.pathname);} ui.welcome.hidden = true; ui.app.hidden = false; update(next); resumeHandsFree(); refreshNotificationStatus();  if (new URL(location.href).searchParams.get('page') === 'Today') switchPage('Today'); }
 function update(next) {
  if (next) {
   if (state && next.settings?.muted !== state.settings?.muted && typeof next.settings?.muted === 'boolean') setMute(next.settings.muted);
@@ -78,6 +80,7 @@ function renderMessages() {
   body.append(node('p','message-text',message.content || ''));
   if (message.photoId && state.photos?.some(photo => photo.id === message.photoId)) { const img = node('img','photo-message'); img.alt = 'Photo attached to this message'; body.append(img); photoLoads.push(() => loadHistoricalPhoto(img,message.photoId,generation)); body.append(button('Delete photo','secondary',() => deleteSavedPhoto(message.photoId))); }
   if (message.proposal) body.append(proposalCard(message.proposal));
+  healthUI.render(body,message);
   if (message.sources?.length) { const sources = node('div','sources'); sources.append(node('strong','','Learn more')); for (const source of message.sources) { try { const url = new URL(source.url,location.origin); if (url.protocol !== 'https:') continue; const a = node('a','',source.title || url.hostname); a.href = url.href; a.target = '_blank'; a.rel = 'noopener noreferrer'; sources.append(a); } catch {} } body.append(sources); }
   if (message.options?.length) { const options = node('div','quick-replies'); message.options.forEach(text => options.append(button(text,'',() => chooseReply(text)))); body.append(options); }
   row.append(body); fragment.append(row);
@@ -194,6 +197,7 @@ function renderPanel() {
   panel.append(chatButton('Log an activity','Log catheterization'));
  }
  if (activePage === 'Settings') {
+  healthUI.settings(panel,config?.features?.healthSystems&&state.mode==='personal');
   panel.append(panelHeader('Make this space yours.','You can change your preferences here, or just ask in the conversation.'));
   const notifications = node('section','data-card'); notifications.append(node('h2','','Device notifications'));
   notifications.append(node('p','',pushStatus.enabled ? (state.settings.notificationsEnabled===false ? 'This device is connected, but scheduled notifications are turned off for your account. Enable again to resume them.' : 'Enabled on this browser. Lock-screen messages contain no medication names or health details.') : pushStatus.permission === 'denied' ? 'Chrome or Android is blocking this device. Your schedule is saved, but this device cannot receive reminders until permission is allowed.' : 'Off on this device. Enable to receive reminders even when this page is closed.'));
