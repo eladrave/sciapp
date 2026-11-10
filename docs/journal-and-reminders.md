@@ -85,3 +85,9 @@ Not validated: live vision accuracy of the amount on real bags, and behaviour on
 ## Conversation length (0.11.5)
 
 The conversation renders only the latest ten turns, so it opens on the newest message instead of laying out the whole history and scrolling down. A See earlier messages control at the top adds ten older turns at a time, keeps the turn being read in place, keeps keyboard focus on the control and announces the change. Sending a message or receiving a reply returns to the latest ten. This also limits how many saved photos are fetched on each render. Covered by `test/browser/scroll.spec.js`.
+
+## Questions get answers (0.11.6)
+
+A question is not a request to open the journal. The agent tool `urine_output_total` adds up approved, uncorrected catheterization and bag amounts for a period in the account timezone and replies in words with the total and each amount, for example `860 mL recorded since 7:00 AM today, from 3 entries.` It accepts `relativeDate` (today or yesterday) or local `startDate`/`endDate`, plus `startClock`/`endClock` as 24-hour local clocks; with no dates it covers today, and a start clock includes a record at exactly that minute. Records without an amount and bag photos that were never approved are reported in the reply but never added. It is read-only.
+
+`query_care_journal` accepts the same `startClock`/`endClock` window. Its `show` purpose is for requests to see or show records, photos or the journal. For any other question the agent uses `lookup` and states the result; a looked-up answer no longer attaches journal cards.
