@@ -1,5 +1,6 @@
 import {reminderTasks,careAgenda,catheterScheduleMatch} from './reminders.js';
 import { medicationKey, findMedication, parseCareList } from './medications.js';
+import {profileFields,normalizeProfile,updateProfile} from './profile.js';
 export const now = () => new Date(Date.now()).toISOString();
 export const uid = () => crypto.randomUUID();
 export function message(role, content, extra = {}) { return { id: uid(), role, content, createdAt: now(), ...extra }; }
@@ -103,7 +104,7 @@ export function proposal(state, kind, params) {
     if (params.systolic == null && params.heartRate == null) throw new AppError('Please provide a blood pressure or heart-rate reading.');
     title = 'Save your reading'; details = [`Reading time: ${new Intl.DateTimeFormat('en-US',{timeZone:state.settings.timezone,dateStyle:'medium',timeStyle:'short'}).format(new Date(params.time))} (${state.settings.timezone})`,params.systolic == null ? null : `Blood pressure: ${params.systolic}/${params.diastolic} mmHg`, params.heartRate == null ? null : `Heart rate: ${params.heartRate} bpm`, params.photoId ? 'Source: photo, check the displayed numbers before approving' : 'Source: entered by you'].filter(Boolean);
   } else if (kind === 'settings') {
-    const allowed = ['muted', 'handsFree', 'voicePauseMs', 'textScale', 'quietUntil', 'catheterIntervalHours', 'name', 'timezone', 'catheterRemindersEnabled', 'catheterStartAt', 'notificationsEnabled', 'catheterScheduleMode'];
+    const allowed = ['muted', 'handsFree', 'voicePauseMs', 'textScale', 'quietUntil', 'catheterIntervalHours', 'name', 'fullName', 'gender', 'dateOfBirth', 'injuryLevel', 'timezone', 'catheterRemindersEnabled', 'catheterStartAt', 'notificationsEnabled', 'catheterScheduleMode'];
     params = Object.fromEntries(Object.entries(params).filter(([k]) => allowed.includes(k)));
     if (!Object.keys(params).length) throw new AppError('Which setting would you like to change?');
     if ('muted' in params && typeof params.muted !== 'boolean') throw new AppError('Mute must be on or off.');
@@ -116,8 +117,9 @@ export function proposal(state, kind, params) {
     if ('textScale' in params) params.textScale = number(params.textScale, 'text size', 1, 1.5);
     if ('catheterIntervalHours' in params) params.catheterIntervalHours = number(params.catheterIntervalHours, 'hours between reminders', 1, 24);
     if ('quietUntil' in params && params.quietUntil !== null && (!Number.isFinite(Date.parse(params.quietUntil)) || Date.parse(params.quietUntil) <= Date.now())) throw new AppError('Quiet time must end in the future.');
-    if ('name' in params) params.name = string(params.name, 'name', 80);
-    title = 'Update your preferences'; details = Object.entries(params).map(([k, v]) => ({ muted: `Spoken replies ${v ? 'off' : 'on'}`, handsFree: `Hands-free browser voice ${v ? 'on' : 'off'} while this page is open`, voicePauseMs: `Wait ${Number(v)/1000} seconds after speech`, textScale: `Text size ${Math.round(Number(v) * 100)}%`, catheterScheduleMode: `Catheter reminder mode: ${v}`, catheterIntervalHours: `Catheterization interval: ${v} hours`, quietUntil: v ? `Quiet until ${v}` : 'End timed quiet mode', name: `Call you ${v}`, timezone: `Timezone: ${v}`, catheterRemindersEnabled: `Catheter reminders ${v?'on':'off'}`, notificationsEnabled: `Notifications ${v?'on':'off'}`, catheterStartAt: `Start catheter reminder clock: ${v}` })[k]);
+    if ('name' in params) params.name = string(params.name, 'name', 60);
+    const personal=Object.fromEntries(Object.entries(params).filter(([k])=>profileFields.includes(k)));if(Object.keys(personal).length)Object.assign(params,normalizeProfile(personal));
+    title = 'Update your preferences'; details = Object.entries(params).map(([k, v]) => ({ muted: `Spoken replies ${v ? 'off' : 'on'}`, handsFree: `Hands-free browser voice ${v ? 'on' : 'off'} while this page is open`, voicePauseMs: `Wait ${Number(v)/1000} seconds after speech`, textScale: `Text size ${Math.round(Number(v) * 100)}%`, catheterScheduleMode: `Catheter reminder mode: ${v}`, catheterIntervalHours: `Catheterization interval: ${v} hours`, quietUntil: v ? `Quiet until ${v}` : 'End timed quiet mode', name: `Call you ${v}`, timezone: `Timezone: ${v}`, catheterRemindersEnabled: `Catheter reminders ${v?'on':'off'}`, notificationsEnabled: `Notifications ${v?'on':'off'}`, catheterStartAt: `Start catheter reminder clock: ${v}`, fullName: v?`Full name: ${v}`:'Remove full name', gender: v?`Gender: ${v}`:'Remove gender', dateOfBirth: v?`Date of birth: ${v}`:'Remove date of birth', injuryLevel: v?`Spinal cord injury level: ${v}`:'Remove injury level' })[k]);
   } else if (kind === 'caregiver') {
     params = { email: string(params.email, 'email address', 254), role: ['follow', 'record'].includes(params.role) ? params.role : 'follow' };
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(params.email)) throw new AppError('Please check the email address.');
@@ -166,7 +168,7 @@ export function finishProposal(state, id, decision) {
     if (item.count != null && item.count + delta < 0) throw new AppError(`There are not enough ${item.unit} in your inventory. Correct your stock first.`, 409);
     if(item.count != null) {item.count += delta;event.delta = { itemId: item.id, quantity: delta };} else event.stockUntracked = true; if (p.kind === 'supplies') item.name = data.name;
   }
-  if (p.kind === 'settings') for (const [key, value] of Object.entries(data)) { if (key === 'name') state.profile.name = value; else state.settings[key] = value; if(key==='timezone')state.settings.timezoneConfirmed=true; }
+  if (p.kind === 'settings') for (const [key, value] of Object.entries(data)) { if (profileFields.includes(key)) updateProfile(state,{[key]:value}); else state.settings[key] = value; if(key==='timezone')state.settings.timezoneConfirmed=true; }
   if (p.kind === 'caregiver') state.caregivers.push({ id: uid(), ...data, status: 'draft', createdAt: now() });
   state.events.unshift(event); p.status = 'approved'; syncProposal(state, p);
   const stockItem=event.delta?.medicationId ? state.medications.find(m=>m.id===event.delta.medicationId) : state.inventory.find(i=>i.id===event.delta?.itemId);

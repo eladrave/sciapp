@@ -5,6 +5,7 @@ import {extractPhotoCaptureTime,resolvePhotoCaptureTime} from './photo-metadata.
 import {scheduledBagPhotoReview,bagPhotoTiming} from './photo-review.js';
 import {medicationCheckInAction,applyMedicationSelectionDraft,medicationCheckInResume} from './medication-checkin.js';
 import {journalQuery} from './journal.js';
+import {updateProfile} from './profile.js';
 import { questionChoices } from '../web/question-choices.js';
 import { runCareAgent } from './care-orchestrator.js';
 import { aiConfiguration } from './ai-config.js';
@@ -93,7 +94,7 @@ export default {
       if (!configuredOrigins(env,url.origin).includes(url.origin))return json({error:'This hostname is not configured for SCIapp.'},421);
       const canonical=canonicalHome(request,env);
       if(canonical)return new Response(null,{status:302,headers:{...security,Location:canonical}});
-      if (path === '/api/health') {const {settings}=await aiConfiguration(env);return json({ status:'ok',version:'0.11.8',chatModel:settings.provider==='openai'?settings.chatModel:CHAT_MODEL,visionModel:settings.provider==='openai'?settings.visionModel:VISION_MODEL,provider:settings.provider,mode:'personal-beta' });}
+      if (path === '/api/health') {const {settings}=await aiConfiguration(env);return json({ status:'ok',version:'0.11.9',chatModel:settings.provider==='openai'?settings.chatModel:CHAT_MODEL,visionModel:settings.provider==='openai'?settings.visionModel:VISION_MODEL,provider:settings.provider,mode:'personal-beta' });}
       if (path === '/api/config' && request.method === 'GET') return json({ appOrigin:env.APP_ORIGIN||url.origin, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null, authEnvironment: env.CLERK_PUBLISHABLE_KEY?.startsWith('pk_live_') ? 'production' : 'development', pushPublicKey:env.VAPID_PUBLIC_KEY||null, mode: env.CLERK_PUBLISHABLE_KEY ? 'authenticated' : 'preview', features: { notifications: !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY),notificationDiagnostics:true, memory:retrievalReady(env), resources:retrievalReady(env), medications:true, photos: true, transcription: !!env.AI, speech: false, caregivers: 'drafts', healthSystems:!!env.HEALTH_TOKEN_KEY, healthConnect: false }, notice: 'Personal care beta. Medication and allergy records are user-entered. Notifications are reminders, not guaranteed clinical alarms. Caregiver invitations remain drafts.' });
       if (!path.startsWith('/api/')) {
         if (!['GET','HEAD'].includes(request.method)) return json({ error: 'Method not allowed.' },405);
@@ -114,7 +115,7 @@ export default {
         await env.DB.prepare('INSERT INTO sessions(token_hash,account_id,expires_at) VALUES (?,?,?)').bind(await hash(token),id,Date.now()+7*86400000).run();
         return json({ state: publicState((await load(env,id)).state) },200,{ 'Set-Cookie': `__Host-sciapp=${token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=604800` });
       }
-      if(path.startsWith('/api/admin/'))return await adminRoute(request,env,ctx,{json,bodyJSON:r=>bodyJSON(r,600000),form,version:'0.11.8'});
+      if(path.startsWith('/api/admin/'))return await adminRoute(request,env,ctx,{json,bodyJSON:r=>bodyJSON(r,600000),form,version:'0.11.9'});
       if(path==='/api/health-systems/callback'&&request.method==='GET'){
         if(!env.HEALTH_TOKEN_KEY)throw new AppError('Health connections are not configured.',503);
         const result=await completeConnection(env,request);return new Response(null,{status:303,headers:{...security,Location:env.APP_ORIGIN+'/?health='+(result.cancelled?'cancelled':'connected'),'Set-Cookie':result.cookie}});
@@ -128,6 +129,7 @@ export default {
       if(path==='/api/reminders/dismiss'&&request.method==='POST'){const data=await bodyJSON(request);return json(await mutate(env,id,state=>dismissReminders(state,data)));}
       if(path==='/api/reminders/snooze-checkin'&&request.method==='POST'){const data=await bodyJSON(request);return json(await mutate(env,id,state=>snoozeCareCheckIn(state,data)));}
       if(path==='/api/reminders/snooze'&&request.method==='POST'){const data=await bodyJSON(request);return json(await mutate(env,id,state=>{const task=reminderTasks(state).find(t=>t.id===data.occurrenceId&&Date.parse(t.dueAt)<=Date.now());if(!task)throw new AppError('This reminder is no longer due.',409);state.reminderSnoozes=Object.fromEntries(Object.entries(state.reminderSnoozes||{}).filter(([,v])=>Date.parse(v)>Date.now()));state.reminderSnoozes[task.id]=new Date(Date.now()+1800000).toISOString();return message('assistant','I will show this check-in again in 30 minutes while the app is open, or when you next return. No dose was recorded.');}));}
+      if(path==='/api/profile'&&request.method==='POST'){const data=await bodyJSON(request);for(let attempt=0;;attempt++){const {state,version}=await load(env,id);updateProfile(state,data);try{await store(env,id,state,version);return json({state:publicState(state)});}catch(e){if(e.status!==409||attempt===3)throw e;}}}
       if(path==='/api/journal'&&request.method==='POST')return json(journalQuery((await load(env,id)).state,await bodyJSON(request)));
       if (path === '/api/state' && request.method === 'GET') return json(publicState((await load(env,id)).state));
       if (path === '/api/session' && request.method === 'DELETE') { const token=(request.headers.get('cookie')||'').match(/(?:^|;\s*)__Host-sciapp=([^;]+)/)?.[1]; if(token)await env.DB.prepare('DELETE FROM sessions WHERE token_hash=?').bind(await hash(token)).run(); return json({ok:true},200,{'Set-Cookie':'__Host-sciapp=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0'}); }

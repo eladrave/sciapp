@@ -195,9 +195,40 @@ function dailyClock(value) {
  if(!match)return String(value);
  const hour=Number(match[1]);return `${hour%12||12}:${match[2]} ${hour>=12?'PM':'AM'}`;
 }
+const GENDERS=['Female','Male','Non-binary','Other','Prefer not to say'];
+let editingProfile=false;
+// Personal details are saved directly by the Save button; they are not care records.
+function appendAboutYou(parent){
+ const p=state.profile||{},section=node('section','profile-section');section.setAttribute('aria-label','About you');section.append(node('h3','','About you'));
+ const born=p.dateOfBirth?new Date(p.dateOfBirth+'T00:00:00Z').toLocaleDateString([], {timeZone:'UTC',dateStyle:'long'}):'';
+ const rows=[['Preferred name',p.name&&p.name!=='You'?p.name:''],['Full name',p.fullName||''],['Gender',p.gender||''],['Date of birth',born],['Spinal cord injury level',p.injuryLevel||'']];
+ if(!editingProfile){
+  const list=node('dl','profile-details');for(const [label,value] of rows){list.append(node('dt','',label),node('dd',value?'':'muted',value||'Not set'));}
+  const edit=button(rows.some(r=>r[1])?'Edit my details':'Add my details','secondary',()=>{editingProfile=true;renderPanel();document.getElementById('profile-name-input')?.focus();});
+  section.append(list,edit,node('p','answer-hint','Or tell me in the conversation, for example “my full name is …”.'));parent.append(section);return;
+ }
+ const form=node('form','profile-form');form.noValidate=true;
+ const field=(id,label,control)=>{const l=node('label','',label);l.htmlFor=id;control.id=id;form.append(l,control);return control;};
+ const input=(id,label,value,attrs={})=>{const el=document.createElement('input');el.type='text';el.value=value||'';Object.assign(el,attrs);return field(id,label,el);};
+ const name=input('profile-name-input','Preferred name (what I call you)',p.name&&p.name!=='You'?p.name:'',{autocomplete:'nickname',maxLength:60});
+ const fullName=input('profile-full-name','Full name',p.fullName,{autocomplete:'name',maxLength:120});
+ const gender=document.createElement('select');for(const value of ['',...GENDERS,...(p.gender&&!GENDERS.includes(p.gender)?[p.gender]:[])]){const o=document.createElement('option');o.value=value;o.textContent=value||'Not set';gender.append(o);}gender.value=p.gender||'';gender.autocomplete='sex';field('profile-gender','Gender',gender);
+ const dob=input('profile-dob','Date of birth',p.dateOfBirth,{type:'date',autocomplete:'bday',max:new Date().toISOString().slice(0,10),min:'1900-01-01'});
+ const injury=input('profile-injury','Spinal cord injury level (optional, for example C6 incomplete)',p.injuryLevel,{maxLength:80});
+ const save=node('button','primary','Save my details');save.type='submit';
+ const cancel=button('Cancel','secondary',()=>{editingProfile=false;error();renderPanel();});
+ const actions=node('div','profile-actions');actions.append(save,cancel);form.append(actions);
+ form.addEventListener('submit',async event=>{
+  event.preventDefault();if(busy)return;save.disabled=true;error();
+  try{const result=await api('/api/profile',{method:'POST',body:JSON.stringify({name:name.value,fullName:fullName.value,gender:gender.value,dateOfBirth:dob.value,injuryLevel:injury.value})});editingProfile=false;update(result.state);ui.announcer.textContent='Your details were saved.';}
+  catch(e){save.disabled=false;error(e.message);}
+ });
+ section.append(form);parent.append(section);
+}
 function appendProfile(panel) {
  const profile=node('section','data-card profile-card');profile.setAttribute('aria-label','Your profile');
- profile.append(node('h2','','Profile'),node('p','profile-name',state.profile?.name||'You'),node('p','',`Timezone: ${state.settings.timezone||'Not set'}`));
+ profile.append(node('h2','','Profile'),node('p','profile-name',state.profile?.fullName||state.profile?.name||'You'),node('p','',`Timezone: ${state.settings.timezone||'Not set'}`));
+ appendAboutYou(profile);
  const catheter=node('section','profile-section');catheter.append(node('h3','','Catheterization schedule'));
  const daily=state.settings.catheterScheduleMode==='daily'&&state.settings.catheterTimes?.length;
  catheter.append(node('p','profile-schedule',daily?'Every day: '+state.settings.catheterTimes.map(dailyClock).join(' · '):state.settings.catheterStartAt||state.settings.catheterRemindersEnabled?'Every '+state.settings.catheterIntervalHours+' hours (interval schedule)':'Schedule not set.'));
