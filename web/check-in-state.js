@@ -12,3 +12,9 @@ export function careCheckInState(state,{at=Date.now(),page='Conversation',signed
  const showNotificationSetup=signedIn&&notificationsConfigured&&!notificationsConnected&&!['unknown','unavailable'].includes(notificationPermission)&&!(Date.parse(state.checkInHiddenUntil)>at);
  return {show:due.length>0||showNotificationSetup,due,showNotificationSetup};
 }
+
+// The Today page lists only reminders whose local calendar day, in the account timezone, is today.
+export function todaysReminders(tasks,timezone,at=Date.now()){
+ const day=value=>new Intl.DateTimeFormat('en-CA',{timeZone:timezone||undefined,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));
+ const today=day(at);return (tasks||[]).filter(t=>day(t.dueAt)===today);
+}
