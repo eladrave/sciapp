@@ -1,3 +1,4 @@
+import {createOnboardingUI} from './onboarding.js';
 import {careCheckInState} from './check-in-state.js';
 import {createMedicationCheckInUI} from './medication-checkin.js';
 import {createJournalUI} from './journal.js';
@@ -7,7 +8,7 @@ import { createChatScroll } from './chat-scroll.js';
 import { confirmationDelay } from './conversation-controls.js';
 import { notificationStatus, reportNotificationDiagnostic, watchNotificationPermission, pendingNotificationEnable, permissionGuidance, enableNotifications, disableNotifications, detachBrowserNotifications, testNotification } from './notifications.js';
 const $ = (selector) => document.querySelector(selector);
-const ui = Object.fromEntries(['welcome','app','start-preview','sign-in','welcome-error','messages','message','composer','send','error','thinking','mute','mute-label','mute-icon','voice','voice-label','recording-status','photo','photo-input','camera-input','photo-options','take-photo','upload-image','attachment','attachment-image','attachment-status','remove-photo','panel','conversation','page-label','composer-area','avatar','date-label','composer-hint','account','announcer'].map(id => [id, document.getElementById(id)]));
+const ui = Object.fromEntries(['help','welcome','app','start-preview','sign-in','welcome-error','messages','message','composer','send','error','thinking','mute','mute-label','mute-icon','voice','voice-label','recording-status','photo','photo-input','camera-input','photo-options','take-photo','upload-image','attachment','attachment-image','attachment-status','remove-photo','panel','conversation','page-label','composer-area','avatar','date-label','composer-hint','account','announcer'].map(id => [id, document.getElementById(id)]));
 let state, config, activePage = 'Conversation', busy = false, photo = null, photoPreview, recorder, recordStream, recording = false, recognition, audioChunks = [], uploadBusy = false;
 let photoGeneration = 0, accountGeneration = 0, voiceGeneration = 0, silenceTimer, handsFreeRecognition, handsFreeRunning = false, assistantSpeaking = false, manualVoiceActive = false, handsFreePaused = false, speechGeneration = 0;
 const chatScroll = createChatScroll($('#main'),ui.messages,() => activePage === 'Conversation' && !ui.app.hidden);
@@ -28,6 +29,8 @@ function button(text, className, handler) { const el = node('button', className,
 async function readPhoto(photoId){const generation=accountGeneration;const headers=new Headers();const token=await window.Clerk?.session?.getToken();if(token)headers.set('Authorization',`Bearer ${token}`);const r=await fetch(`/api/photos/${encodeURIComponent(photoId)}`,{headers,credentials:'same-origin'});if(generation!==accountGeneration)throw staleError();if(!r.ok)throw new Error('Original photo unavailable.');const blob=await r.blob();if(generation!==accountGeneration)throw staleError();return blob;}
 const journalUI=createJournalUI({api,node,button,readPhoto,send,error,formatTime});
 const medicationCheckInUI=createMedicationCheckInUI({dismiss:dismissReminder,node,button,run:runMedicationCheckIn,send,isBusy:()=>busy||uploadBusy||recording});
+const onboardingUI=createOnboardingUI({node,button,show:showAppHelp,complete:finishOnboarding,draft:text=>{ui.message.value=text;switchPage('Conversation');focusComposer(true);ui.announcer.textContent='Example added. Edit it to fit you, then Send.';},isBusy:()=>busy||uploadBusy||recording});
+ui.help.addEventListener('click',()=>showAppHelp());
 const healthUI=createHealthUI({api,node,button,send,error});
 function focusComposer(explicit = false) { if (!ui.app.hidden && (!state?.settings?.handsFree || explicit) && (explicit || document.activeElement === ui.message)) ui.message.focus({preventScroll:true}); }
 function error(message) { ui.error.textContent = message || ''; ui.error.hidden = !message; }
@@ -46,7 +49,7 @@ async function api(path, options = {}) {
  return data;
  } finally { pendingRequests.delete(controller); }
 }
-function setBusy(value) { busy = value; ui.thinking.hidden = !value; ui.send.disabled = value || uploadBusy || recording; ui.message.readOnly = value; ui.composer.setAttribute('aria-busy',String(value)); ui.photo.disabled = value || uploadBusy; ui['take-photo'].disabled = ui['upload-image'].disabled = value || uploadBusy; if(value || uploadBusy)closePhotoOptions(); document.querySelectorAll('[data-action]').forEach(el => { el.disabled = value; }); document.querySelectorAll('.quick-replies button,[data-answer-control]').forEach(el=>{el.disabled=value||uploadBusy||recording||el.dataset.staleQuestion==='true';}); }
+function setBusy(value) { busy = value; ui.help.disabled=value||uploadBusy||recording; ui.thinking.hidden = !value; ui.send.disabled = value || uploadBusy || recording; ui.message.readOnly = value; ui.composer.setAttribute('aria-busy',String(value)); ui.photo.disabled = value || uploadBusy; ui['take-photo'].disabled = ui['upload-image'].disabled = value || uploadBusy; if(value || uploadBusy)closePhotoOptions(); document.querySelectorAll('[data-action]').forEach(el => { el.disabled = value; }); document.querySelectorAll('.quick-replies button,[data-answer-control]').forEach(el=>{el.disabled=value||uploadBusy||recording||el.dataset.staleQuestion==='true';}); }
 function showApp(next) { const healthResult=new URL(location.href).searchParams.get('health');if(healthResult){error(healthResult==='connected'?'Health system authorized. Ask to sync your health records.':'Health system connection cancelled.');history.replaceState(null,'',location.pathname);} ui.welcome.hidden = true; ui.app.hidden = false; update(next); resumeHandsFree(); refreshNotificationStatus();  if (new URL(location.href).searchParams.get('page') === 'Today') switchPage('Today'); }
 function update(next) {
  if (next) {
@@ -88,6 +91,7 @@ function renderMessages() {
   if (message.photoId && state.photos?.some(photo => photo.id === message.photoId)) { const img = node('img','photo-message'); img.alt = 'Photo attached to this message'; body.append(img); photoLoads.push(() => loadHistoricalPhoto(img,message.photoId,generation)); body.append(button('Delete photo','secondary',() => deleteSavedPhoto(message.photoId))); }
   if (message.proposal) body.append(proposalCard(message.proposal));
   healthUI.render(body,message);
+  if(message.appHelp)onboardingUI.render(body,message.appHelp.topic);
   medicationCheckInUI.question(body,message,!state.medicationCheckInResume&&[...messages].reverse().find(m=>m.role==='assistant')?.id===message.id);
   if(message.journalResult)journalUI.appendResults(body,message.journalResult);
   if (message.sources?.length) { const sources = node('div','sources'); sources.append(node('strong','','Learn more')); for (const source of message.sources) { try { const url = new URL(source.url,location.origin); if (url.protocol !== 'https:') continue; const a = node('a','',source.title || url.hostname); a.href = url.href; a.target = '_blank'; a.rel = 'noopener noreferrer'; sources.append(a); } catch {} } body.append(sources); }
@@ -98,7 +102,7 @@ function renderMessages() {
  if (!messages.length) {
   const row = node('article','message assistant'); const mark = node('span','assistant-mark','✳'); mark.setAttribute('aria-hidden','true'); row.append(mark); const body = node('div','message-body'); body.append(node('div','message-meta','LET’S START HERE'),node('p','message-text','I can help you keep track of your day. Choose something below, or tell me what you need.')); const replies = node('div','quick-replies'); ['Log catheterization','Record medication','Add supplies','Invite a caregiver'].forEach(t => replies.append(button(t,'',() => send(t)))); body.append(replies); row.append(body); fragment.append(row);
  }
- const latestBody=fragment.lastElementChild?.querySelector('.message-body');if(latestBody){appendMedicationResume(latestBody);appendCareCheckIn(latestBody);}
+ const latestBody=fragment.lastElementChild?.querySelector('.message-body');if(latestBody){appendMedicationResume(latestBody);if(!onboardingUI.offer(latestBody,state))appendCareCheckIn(latestBody);}
  ui.messages.replaceChildren(fragment); photoLoads.forEach(load => load());
  clearTimeout(approvalTimer); const expiry = (state.messages || []).map(m => m.proposal).filter(p => p?.status === 'pending' && Date.parse(p.expiresAt) > Date.now()).map(p => Date.parse(p.expiresAt)); if (expiry.length) approvalTimer = setTimeout(renderMessages, Math.min(...expiry) - Date.now() + 50);
  chatScroll.afterRender(scrollPosition);
@@ -257,6 +261,7 @@ function renderPanel() {
   const hands = node('section','data-card'); hands.append(node('h2','','Foreground hands-free'),node('p','',state.settings?.handsFree ? 'Enabled while this page is open. Your microphone status is shown below. Speech is sent after your chosen pause.' : 'Optional browser voice conversation while this page is open. No background listening.'),chatButton(state.settings?.handsFree ? 'Turn hands-free off' : 'Turn hands-free on',state.settings?.handsFree ? 'Turn hands-free off' : 'Turn hands-free on')); if(state.settings?.handsFree) hands.append(button(handsFreePaused ? 'Resume listening' : 'Pause listening','secondary',() => {toggleHandsFreePause();})); panel.append(hands);
   const access = node('section','data-card'); access.append(node('h2','','Comfort and access'),node('p','','Change text size, quiet hours, and other preferences through the conversation.'),chatButton('Set my preferences','Settings')); panel.append(access);
   const caregivers = node('section','data-card'); caregivers.append(node('h2','','Your support circle'),node('p','',`${state.caregivers?.length || 0} invitation draft${state.caregivers?.length === 1 ? '' : 's'}. No access granted yet.`),chatButton('Invite a caregiver','I want to add a caretaker to help me follow up on my activities')); panel.append(caregivers);
+  const gettingStarted=node('section','data-card');gettingStarted.append(node('h2','','How to use SCIapp'),node('p','','See examples for care, questions, photos, voice and your journal.'),button('Open getting started guide','secondary',()=>showAppHelp()));panel.append(gettingStarted);
   const about = node('section','data-card'); about.append(node('h2','',state.mode === 'personal' ? 'About this personal beta' : 'About this sample preview'),node('p','',state.mode === 'personal' ? 'Your records are saved to your signed-in account. This beta organizes your entered care plan; it does not prescribe, diagnose, or replace your care team. Caregiver invitations are still drafts.' : 'This separate preview uses sample supplies. Sign in to create your personal medication list and care journal.'));
   if (config?.authEnvironment === 'development') about.append(node('p','','Sign-in currently uses a development environment. Production deployment and operational review remain in progress.'));
   panel.append(about);
@@ -469,6 +474,16 @@ async function dismissReminder(occurrenceIds){
  if(busy||uploadBusy||recording)return;
  const generation=accountGeneration;setBusy(true);error();stopHandsFree();
  try{receive(await api('/api/reminders/dismiss',{method:'POST',body:JSON.stringify({occurrenceIds})}));}
+ catch(e){if(e.name!=='AbortError')error(e.message);}
+ finally{if(generation===accountGeneration){setBusy(false);resumeHandsFree();}}
+}
+
+async function showAppHelp(topic='overview'){await onboardingAction('/api/help',{topic});}
+async function finishOnboarding(){await onboardingAction('/api/onboarding',{action:'complete'});}
+async function onboardingAction(path,data){
+ if(busy||uploadBusy||recording)return;const generation=accountGeneration;
+ switchPage('Conversation',{latest:true});setBusy(true);error();stopHandsFree();
+ try{receive(await api(path,{method:'POST',body:JSON.stringify(data)}));}
  catch(e){if(e.name!=='AbortError')error(e.message);}
  finally{if(generation===accountGeneration){setBusy(false);resumeHandsFree();}}
 }

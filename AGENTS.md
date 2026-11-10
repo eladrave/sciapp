@@ -9,6 +9,6 @@ This product is for people who may have limited use of their hands. Minimize req
 - Never mark an unselected medication taken. Distinguish not taken yet, unconfirmed and actually taken. Missing records never establish adherence or clinical decisions.
 - Use large controls, clear contrast, visible focus and useful screen-reader labels. Never require clicking a specific button when speaking an equivalent answer is possible.
 - Camera capture timestamps are untrusted photo metadata, separate from upload time. Label missing-timezone assumptions. An explicit user time takes priority, and every clinical record still requires review.
-- Test with synthetic data in the isolated test account and Remote Browser. Keep all real personal health data and credentials out of Git. Push every released version.
+- Test with synthetic data in the isolated test account and Remote Browser. When explicitly authorized, private account copies may be used in that isolated account, with notifications disabled and the fixture removed afterward. Keep all real personal health data and credentials out of Git. Push every released version.
 
 - Dismissing a reminder affects only its selected occurrence. Never infer taken, skipped or completed care, change stock, or disable future reminders from dismissal.
