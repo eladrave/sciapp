@@ -89,7 +89,7 @@ export async function retrieveContext(env,id,text){
   if(searches[i].status!=='fulfilled')continue;
   for(const match of searches[i].value.matches||[]){
    if(match.score<threshold)continue;
-   const row=await env.DB.prepare('SELECT c.body,s.id,s.title,s.url,s.created_at,m.kind,m.text_kind FROM retrieval_chunks c JOIN retrieval_sources s ON s.id=c.source_id LEFT JOIN resource_materials m ON m.source_id=s.id WHERE c.id=? AND c.scope=? AND (?=\'shared\' OR c.account_id=?) AND c.deleted_at IS NULL AND s.deleted_at IS NULL AND (c.scope=\'personal\' OR NOT EXISTS(SELECT 1 FROM resource_publication WHERE source_id=s.id AND status!=\'published\'))').bind(match.id,i?'shared':'personal',i?'shared':'personal',id).first();
+   const row=await env.DB.prepare('SELECT c.body,s.id,s.title,s.url,s.created_at,m.kind,m.text_kind,m.upload_id FROM retrieval_chunks c JOIN retrieval_sources s ON s.id=c.source_id LEFT JOIN resource_materials m ON m.source_id=s.id WHERE c.id=? AND c.scope=? AND (?=\'shared\' OR c.account_id=?) AND c.deleted_at IS NULL AND s.deleted_at IS NULL AND (c.scope=\'personal\' OR NOT EXISTS(SELECT 1 FROM resource_publication WHERE source_id=s.id AND status!=\'published\'))').bind(match.id,i?'shared':'personal',i?'shared':'personal',id).first();
    if(row)result[i?'sources':'memories'].push({...row,score:match.score});
   }
  }

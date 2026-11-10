@@ -3,6 +3,7 @@ import { configureClient, clientStatus } from './health-systems.js';
 import { refreshDirectory } from './health-providers.js';
 import { processTranscriptions } from './resource-transcription.js';
 import { uploadResource, materialInput, resourceDownload, MAX_FILE_BYTES } from './resource-files.js';
+import { saveFigure, listFigures, deleteFigures, figureDownload, MAX_FIGURE_BYTES } from './resource-figures.js';
 import { AppError, now, uid } from './domain.js';
 import { processIndexJobs, chunkInsertStatements } from './retrieval.js';
 export const ADMIN_COOKIE='__Host-sciapp-admin';
@@ -71,11 +72,16 @@ export async function adminRoute(request,env,ctx,{json,bodyJSON,form,version}){
  if(path==='/api/admin/uploads'&&request.method==='GET')return json({uploads:(await env.DB.prepare('SELECT id,file_name,mime_type,extraction_status,extraction_note,created_at FROM resource_uploads WHERE NOT EXISTS(SELECT 1 FROM resource_materials WHERE upload_id=resource_uploads.id) ORDER BY created_at DESC LIMIT 50').all()).results});
  const uploadStatus=path.match(/^\/api\/admin\/uploads\/(u-[a-f0-9-]+)\/status$/);
  if(uploadStatus&&request.method==='GET'){const row=await env.DB.prepare('SELECT id,file_name,mime_type,extraction_status,extracted_text,extraction_note FROM resource_uploads WHERE id=?').bind(uploadStatus[1]).first();if(!row)throw new AppError('Upload not found.',404);return json(row);}
+ const figures=path.match(/^\/api\/admin\/uploads\/(u-[a-f0-9-]+)\/figures$/);
+ if(figures&&request.method==='GET')return json({figures:await listFigures(env,figures[1])});
+ if(figures&&request.method==='POST'){const result=await saveFigure(env,figures[1],await form(request,MAX_FIGURE_BYTES+16384));return json(result,201);}
+ if(figures&&request.method==='DELETE'){const removed=await deleteFigures(env,figures[1]);await audit(env,'resource_figures_delete',figures[1]).run();return json({removed});}
+ const figureImage=path.match(/^\/api\/admin\/figures\/(f-[a-f0-9-]+)$/);if(figureImage&&request.method==='GET')return figureDownload(env,figureImage[1],{admin:true});
  const upload=path.match(/^\/api\/admin\/uploads\/(u-[a-f0-9-]+)$/);
  if(upload&&request.method==='GET')return resourceDownload(env,upload[1],{admin:true});
  if(upload&&request.method==='DELETE'){
   if(await env.DB.prepare('SELECT source_id FROM resource_materials WHERE upload_id=? LIMIT 1').bind(upload[1]).first())throw new AppError('This file belongs to a saved resource and cannot be discarded.',409);
-  const row=await env.DB.prepare('SELECT r2_key FROM resource_uploads WHERE id=?').bind(upload[1]).first();if(row){await env.DB.batch([env.DB.prepare('DELETE FROM resource_transcription_jobs WHERE upload_id=?').bind(upload[1]),env.DB.prepare('DELETE FROM resource_uploads WHERE id=?').bind(upload[1])]);await env.RESOURCES.delete(row.r2_key);await audit(env,'unused_upload_delete',upload[1]).run();}return json({ok:true});
+  const row=await env.DB.prepare('SELECT r2_key FROM resource_uploads WHERE id=?').bind(upload[1]).first();if(row){await deleteFigures(env,upload[1]);await env.DB.batch([env.DB.prepare('DELETE FROM resource_transcription_jobs WHERE upload_id=?').bind(upload[1]),env.DB.prepare('DELETE FROM resource_uploads WHERE id=?').bind(upload[1])]);await env.RESOURCES.delete(row.r2_key);await audit(env,'unused_upload_delete',upload[1]).run();}return json({ok:true});
  }
  if(path==='/api/admin/overview'&&request.method==='GET'){
   const queue=await env.DB.prepare("SELECT scope,COUNT(*) AS chunks,SUM(CASE WHEN indexed_at IS NULL AND deleted_at IS NULL THEN 1 ELSE 0 END) AS pending,SUM(CASE WHEN attempts>0 THEN 1 ELSE 0 END) AS retrying FROM retrieval_chunks GROUP BY scope").all();

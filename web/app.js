@@ -69,6 +69,30 @@ function update(next) {
 }
 function formatTime(value) { const date = new Date(value); return Number.isNaN(date.valueOf()) ? '' : date.toLocaleString([], { month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZone:state?.settings?.timezone || undefined }); }
 function revokeHistoricalPhotos() { photoGeneration++; for (const url of historicalPhotoUrls) URL.revokeObjectURL(url); historicalPhotoUrls.clear(); }
+// Figures from published resources. Each image is fetched once and kept, so re-rendering the chat
+// neither refetches it nor moves the page; the frame keeps the figure's shape while it loads.
+const figureCache=new Map();
+function clearFigureCache(){for(const entry of figureCache.values())if(entry.url)URL.revokeObjectURL(entry.url);figureCache.clear();}
+async function figureBlobUrl(path){
+ let entry=figureCache.get(path);
+ if(!entry){entry={promise:(async()=>{const headers=new Headers();const token=await window.Clerk?.session?.getToken();if(token)headers.set('Authorization',`Bearer ${token}`);const response=await fetch(path,{headers,credentials:'same-origin'});if(!response.ok)throw new Error('Figure unavailable.');entry.url=URL.createObjectURL(await response.blob());return entry.url;})()};figureCache.set(path,entry);entry.promise.catch(()=>figureCache.delete(path));}
+ return entry.promise;
+}
+function appendFigures(body,figures){
+ const list=node('div','resource-figures');
+ for(const item of figures.slice(0,3)){
+  if(typeof item?.url!=='string'||!/^\/api\/resources\/figures\/f-[a-f0-9-]+$/.test(item.url))continue;
+  const figure=node('figure','resource-figure'),frame=node('div','resource-figure-frame'),img=node('img');
+  const label=[item.label,item.caption].filter(Boolean).join(': ');
+  img.alt=label?`${label}. Page image from ${item.title||'a shared resource'}.`:'Figure from a shared resource';
+  if(item.width>0&&item.height>0)frame.style.aspectRatio=`${item.width} / ${item.height}`;
+  frame.append(img);
+  const open=button('Open larger','secondary',async()=>{try{window.open(await figureBlobUrl(item.url),'_blank','noopener');}catch(e){error(e.message);}});open.setAttribute('aria-label',`Open ${item.label||'figure'} larger in a new tab`);
+  figure.append(frame,node('figcaption','',[label,[item.title,item.page?`page ${item.page}`:''].filter(Boolean).join(', ')].filter(Boolean).join(' · ')),open);list.append(figure);
+  const cached=figureCache.get(item.url)?.url;if(cached)img.src=cached;else figureBlobUrl(item.url).then(url=>{if(img.isConnected)img.src=url;}).catch(()=>{if(frame.isConnected)frame.replaceChildren(node('p','error-text','This figure could not be loaded.'));});
+ }
+ if(list.children.length)body.append(list);
+}
 async function loadHistoricalPhoto(img, photoId, generation) {
  try {
   const headers = new Headers(); const token = await window.Clerk?.session?.getToken(); if (token) headers.set('Authorization', `Bearer ${token}`);
@@ -106,6 +130,7 @@ function renderMessages(position) {
   medicationCheckInUI.question(body,message,!state.medicationCheckInResume&&[...all].reverse().find(m=>m.role==='assistant')?.id===message.id);
   if(message.journalResult)journalUI.appendResults(body,message.journalResult);
   if (message.sources?.length) { const sources = node('div','sources'); sources.append(node('strong','','Learn more')); for (const source of message.sources) { try { const url = new URL(source.url,location.origin); if (url.protocol !== 'https:') continue; const a = node('a','',source.title || url.hostname); a.href = url.href; a.target = '_blank'; a.rel = 'noopener noreferrer'; sources.append(a); } catch {} } body.append(sources); }
+  if (message.figures?.length) appendFigures(body,message.figures);
   const answers=questionChoices(message);
   if (answers.choices.length) { const options = node('div','quick-replies');options.setAttribute('role','group');options.setAttribute('aria-label','Suggested answers');const currentQuestion=[...all].reverse().find(m=>m.role==='assistant')?.id;answers.choices.forEach(text=>{const choice=button(text,'',()=>chooseReply(text,answers.reference));choice.dataset.staleQuestion=String(!!answers.reference&&message.id!==currentQuestion);choice.disabled=busy||uploadBusy||recording||choice.dataset.staleQuestion==='true';options.append(choice);});body.append(options);if(answers.reference){body.append(node('p','answer-hint',answers.hint));const other=button('Type or say something else','secondary',()=>{focusComposer(true);ui.announcer.textContent='Type your answer, or select Listen to speak.';});other.dataset.answerControl='true';other.dataset.staleQuestion=String(message.id!==currentQuestion);other.disabled=busy||uploadBusy||recording||other.dataset.staleQuestion==='true';body.append(other);} }
   row.append(body); fragment.append(row);
@@ -460,7 +485,7 @@ ui.account.addEventListener('click',async () => {
   try { await api('/api/session',{method:'DELETE'}); await window.sciappSignOut(); showWelcomeAfterSignOut(); } catch(e) {error(e.message);}
  } else if (config?.clerkPublishableKey) await window.sciappSignIn();
 });
-function clearAccountWork() {visibleMessages = MESSAGE_PAGE; lastNotificationDiagnostic=''; journalUI.reset();medicationCheckInUI.reset(); closePhotoOptions(); chatScroll.reset(); notificationBusy = false; pushServerStatus = null; pushStatus = {supported:false,enabled:false,permission:'unknown'}; accountGeneration++; voiceGeneration++; pendingRequests.forEach(controller => controller.abort()); pendingRequests.clear(); clearTimeout(approvalTimer); stopHandsFree(); handsFreePaused = false; if(recognition) {recognition.onend = null; recognition.abort(); recognition = null;} if(recorder?.state === 'recording') recorder.stop(); recorder = null; audioChunks = []; recordStream?.getTracks().forEach(track => track.stop()); resetRecording(); assistantSpeaking = false; window.speechSynthesis?.cancel(); uploadBusy = false; setBusy(false); revokeHistoricalPhotos(); removePhoto({deleteRemote:false}); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; ui.announcer.textContent = ''; ui.app.hidden = true; ui.welcome.hidden = false; switchPage('Conversation'); }
+function clearAccountWork() {visibleMessages = MESSAGE_PAGE; clearFigureCache(); lastNotificationDiagnostic=''; journalUI.reset();medicationCheckInUI.reset(); closePhotoOptions(); chatScroll.reset(); notificationBusy = false; pushServerStatus = null; pushStatus = {supported:false,enabled:false,permission:'unknown'}; accountGeneration++; voiceGeneration++; pendingRequests.forEach(controller => controller.abort()); pendingRequests.clear(); clearTimeout(approvalTimer); stopHandsFree(); handsFreePaused = false; if(recognition) {recognition.onend = null; recognition.abort(); recognition = null;} if(recorder?.state === 'recording') recorder.stop(); recorder = null; audioChunks = []; recordStream?.getTracks().forEach(track => track.stop()); resetRecording(); assistantSpeaking = false; window.speechSynthesis?.cancel(); uploadBusy = false; setBusy(false); revokeHistoricalPhotos(); removePhoto({deleteRemote:false}); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; ui.announcer.textContent = ''; ui.app.hidden = true; ui.welcome.hidden = false; switchPage('Conversation'); }
 function showWelcomeAfterSignOut() {
  clearAccountWork(); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; window.speechSynthesis?.cancel(); ui.app.hidden = true; ui.welcome.hidden = false; ui.account.hidden = true;
 }

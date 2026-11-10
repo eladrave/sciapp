@@ -7,6 +7,7 @@ await mkdir('generated',{recursive:true});await mkdir('dist',{recursive:true});
 const reportBuild=await build({entryPoints:['client/doctor-report.js'],bundle:true,write:false,format:'esm',platform:'browser',target:'es2022',minify:true,legalComments:'eof'});
 assets['/doctor-report.js']={body:reportBuild.outputFiles[0].text,type:'text/javascript; charset=utf-8'};
 assets['/report-font.woff']={base64:(await readFile('assets/report-font.woff')).toString('base64'),type:'font/woff'};
+for(const [name,file] of [['/pdf.min.mjs','pdf.min.mjs'],['/pdf.worker.min.mjs','pdf.worker.min.mjs']])assets[name]={body:await readFile('node_modules/pdfjs-dist/legacy/build/'+file,'utf8'),type:'text/javascript; charset=utf-8'};
 await writeFile('generated/assets.js',`export const assets=${JSON.stringify(assets)};\n`);
 await build({entryPoints:['worker/index.js'],outfile:'dist/worker.js',bundle:true,format:'esm',platform:'browser',target:'es2022',conditions:['workerd','worker','browser'],minify:true});
 console.log(`Built worker and ${Object.keys(assets).length} web assets.`);

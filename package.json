@@ -1,12 +1,12 @@
 {
   "name": "sciapp",
-  "version": "0.11.10",
+  "version": "0.11.11",
   "description": "Accessible conversational care companion for people with spinal cord injuries.",
   "scripts": {
     "build": "node scripts/build.mjs",
     "dev": "npm run build && node scripts/dev.mjs",
     "test": "npm run build && node --test test/*.test.js",
-    "check": "node --check worker/index.js && node --check worker/domain.js && node --check worker/conversation.js && node --check web/app.js && node --check web/auth.js && node --check worker/retrieval.js && node --check worker/assistant-actions.js && node --check web/chat-scroll.js && node --check worker/admin.js && node --check web/admin.js && node --check worker/resource-files.js && node --check worker/resource-transcription.js && node --check worker/chat-tools.js && node --check worker/care-tool-schema.js && node --check worker/catheter-schedule.js && node --check worker/health-systems.js && node --check worker/ai-config.js && node --check worker/health-providers.js && node --check web/health-systems.js && node --check worker/care-agent.js && node --check worker/care-orchestrator.js && node --check worker/photo-review.js && node --check worker/journal.js && node --check web/journal.js && node --check worker/medication-checkin.js && node --check worker/photo-metadata.js && node --check web/medication-checkin.js && node --check web/notifications.js && node --check worker/push-diagnostics.js && node --check client/doctor-report.js && node --check web/check-in-state.js && node --check worker/care-checkin.js && node --check worker/onboarding.js && node --check web/onboarding.js && node --check worker/profile.js",
+    "check": "node --check worker/index.js && node --check worker/domain.js && node --check worker/conversation.js && node --check web/app.js && node --check web/auth.js && node --check worker/retrieval.js && node --check worker/assistant-actions.js && node --check web/chat-scroll.js && node --check worker/admin.js && node --check web/admin.js && node --check worker/resource-files.js && node --check worker/resource-transcription.js && node --check worker/chat-tools.js && node --check worker/care-tool-schema.js && node --check worker/catheter-schedule.js && node --check worker/health-systems.js && node --check worker/ai-config.js && node --check worker/health-providers.js && node --check web/health-systems.js && node --check worker/care-agent.js && node --check worker/care-orchestrator.js && node --check worker/photo-review.js && node --check worker/journal.js && node --check web/journal.js && node --check worker/medication-checkin.js && node --check worker/photo-metadata.js && node --check web/medication-checkin.js && node --check web/notifications.js && node --check worker/push-diagnostics.js && node --check client/doctor-report.js && node --check web/check-in-state.js && node --check worker/care-checkin.js && node --check worker/onboarding.js && node --check web/onboarding.js && node --check worker/profile.js && node --check worker/resource-figures.js && node --check web/figure-captions.js",
     "deploy": "npm run build && node scripts/deploy.mjs",
     "test:browser": "playwright test"
   },
@@ -25,9 +25,10 @@
   "dependencies": {
     "@block65/webcrypto-web-push": "^2.0.0",
     "@clerk/backend": "^3.27.0",
+    "@pdf-lib/fontkit": "1.1.1",
     "fflate": "0.8.3",
     "pdf-lib": "1.17.1",
-    "@pdf-lib/fontkit": "1.1.1"
+    "pdfjs-dist": "4.10.38"
   },
   "devDependencies": {
     "@playwright/test": "^1.65.0",
