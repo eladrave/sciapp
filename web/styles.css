@@ -40,3 +40,5 @@
 .medication-group li{padding-block:5px}.medication-group li .secondary{margin-left:12px;min-height:48px}.care-due>button{margin-right:8px}
 
 .help-examples{font-size:calc(14px * var(--scale));line-height:1.6}.help-examples dt{font-weight:700;color:#2d4d40;margin-top:12px}.help-examples dd{margin:4px 0 12px}.onboarding-guide>button{margin:8px 8px 0 0}.onboarding-guide .quick-replies button{min-height:48px;font-size:calc(13px * var(--scale))}#help{min-height:48px;min-width:48px}
+/* Earlier turns load a batch at a time from the top of the conversation. */
+.earlier-messages{display:flex;justify-content:center;margin:0 0 18px}.earlier-messages button{min-height:48px;padding:12px 18px;font-size:calc(14px * var(--scale));font-weight:600}.earlier-messages button:focus-visible{outline:3px solid #16655b;outline-offset:3px}

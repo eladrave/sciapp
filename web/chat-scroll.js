@@ -7,7 +7,7 @@ export function createChatScroll(container, messages, isActive) {
  function capture() {
   if (!isActive()) return saved;
   const top = container.getBoundingClientRect().top;
-  const anchor = [...messages.children].find(row => row.getBoundingClientRect().bottom > top);
+  const anchor = [...messages.children].find(row => row.dataset.messageId && row.getBoundingClientRect().bottom > top);
   return { latest: following, top: container.scrollTop, id: anchor?.dataset.messageId, offset: anchor ? anchor.getBoundingClientRect().top - top : 0 };
  }
  function apply(position) {

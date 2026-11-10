@@ -2,6 +2,7 @@ import {appHelp,completeOnboarding} from './onboarding.js';
 import {snoozeCareCheckIn,dismissReminders} from './care-checkin.js';
 import {savePushDiagnostic} from './push-diagnostics.js';
 import {extractPhotoCaptureTime,resolvePhotoCaptureTime} from './photo-metadata.js';
+import {scheduledBagPhotoReview,bagPhotoTiming} from './photo-review.js';
 import {medicationCheckInAction,applyMedicationSelectionDraft,medicationCheckInResume} from './medication-checkin.js';
 import {journalQuery} from './journal.js';
 import { questionChoices } from '../web/question-choices.js';
@@ -92,7 +93,7 @@ export default {
       if (!configuredOrigins(env,url.origin).includes(url.origin))return json({error:'This hostname is not configured for SCIapp.'},421);
       const canonical=canonicalHome(request,env);
       if(canonical)return new Response(null,{status:302,headers:{...security,Location:canonical}});
-      if (path === '/api/health') {const {settings}=await aiConfiguration(env);return json({ status:'ok',version:'0.11.4',chatModel:settings.provider==='openai'?settings.chatModel:CHAT_MODEL,visionModel:settings.provider==='openai'?settings.visionModel:VISION_MODEL,provider:settings.provider,mode:'personal-beta' });}
+      if (path === '/api/health') {const {settings}=await aiConfiguration(env);return json({ status:'ok',version:'0.11.5',chatModel:settings.provider==='openai'?settings.chatModel:CHAT_MODEL,visionModel:settings.provider==='openai'?settings.visionModel:VISION_MODEL,provider:settings.provider,mode:'personal-beta' });}
       if (path === '/api/config' && request.method === 'GET') return json({ appOrigin:env.APP_ORIGIN||url.origin, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null, authEnvironment: env.CLERK_PUBLISHABLE_KEY?.startsWith('pk_live_') ? 'production' : 'development', pushPublicKey:env.VAPID_PUBLIC_KEY||null, mode: env.CLERK_PUBLISHABLE_KEY ? 'authenticated' : 'preview', features: { notifications: !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY),notificationDiagnostics:true, memory:retrievalReady(env), resources:retrievalReady(env), medications:true, photos: true, transcription: !!env.AI, speech: false, caregivers: 'drafts', healthSystems:!!env.HEALTH_TOKEN_KEY, healthConnect: false }, notice: 'Personal care beta. Medication and allergy records are user-entered. Notifications are reminders, not guaranteed clinical alarms. Caregiver invitations remain drafts.' });
       if (!path.startsWith('/api/')) {
         if (!['GET','HEAD'].includes(request.method)) return json({ error: 'Method not allowed.' },405);
@@ -113,7 +114,7 @@ export default {
         await env.DB.prepare('INSERT INTO sessions(token_hash,account_id,expires_at) VALUES (?,?,?)').bind(await hash(token),id,Date.now()+7*86400000).run();
         return json({ state: publicState((await load(env,id)).state) },200,{ 'Set-Cookie': `__Host-sciapp=${token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=604800` });
       }
-      if(path.startsWith('/api/admin/'))return await adminRoute(request,env,ctx,{json,bodyJSON:r=>bodyJSON(r,600000),form,version:'0.11.4'});
+      if(path.startsWith('/api/admin/'))return await adminRoute(request,env,ctx,{json,bodyJSON:r=>bodyJSON(r,600000),form,version:'0.11.5'});
       if(path==='/api/health-systems/callback'&&request.method==='GET'){
         if(!env.HEALTH_TOKEN_KEY)throw new AppError('Health connections are not configured.',503);
         const result=await completeConnection(env,request);return new Response(null,{status:303,headers:{...security,Location:env.APP_ORIGIN+'/?health='+(result.cancelled?'cancelled':'connected'),'Set-Cookie':result.cookie}});
@@ -173,10 +174,12 @@ export default {
         let photoData=null;
         if(data.photoId) { attachmentOwner(state,data.photoId); await limit(request,env,'ai',60); const file=await env.PHOTOS.get(`${id}/${data.photoId}`); if(!file)throw new AppError('Photo no longer available.',404); try{photoData=await analyzePhoto(env,file,text);}catch{console.warn(JSON.stringify({event:'photo_interpretation_failed',model:VISION_MODEL}));photoData={type:'other',notes:'The image-processing service did not complete. Your photo is saved; please retry or enter the reading.'};} }
         if(data.photoId){const metadata=state.photos.find(p=>p.id===data.photoId);if(!Object.hasOwn(metadata,'captureTime')){const original=await env.PHOTOS.get(`${id}/${data.photoId}`);if(original)metadata.captureTime=extractPhotoCaptureTime(new Uint8Array(await original.arrayBuffer()));}photoData={...photoData,captureTime:resolvePhotoCaptureTime(metadata.captureTime,state.settings.timezone||'UTC')};metadata.analysis=photoData;metadata.userText=text;metadata.analyzedAt=now();}
+        if(photoData?.type==='bag'){const timing=bagPhotoTiming(state,photoData);if(timing)photoData={...photoData,scheduleMatch:{scheduledClock:timing.match.clock,scheduledFor:timing.match.dueAt,photoTime:timing.time,note:timing.assumption}};}
         const userMessage=message('user',text||'Photo attached',data.photoId?{photoId:data.photoId,photoUrl:`/api/photos/${data.photoId}`}:{ });
         state.messages.push(userMessage);
-        let reply;
-        if(env.AI||env.OPENAI_API_KEY){
+        let reply=data.photoId?scheduledBagPhotoReview(state,text,photoData,data.photoId):null;
+        if(reply){}
+        else if(env.AI||env.OPENAI_API_KEY){
           await limit(request,env,'ai',150);
           try{let context={sources:[]}; const health=await healthContext(env,id);try{context=await retrieveContext(env,id,text);}catch{console.warn(JSON.stringify({event:'retrieval_unavailable'}));}
             reply=await runCareAgent(env,id,state,text,{memories:context.memories||[],sources:(context.sources||[]).map(s=>({...s,text:s.body})),photoData,photoId:data.photoId,health});

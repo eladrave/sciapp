@@ -1,5 +1,6 @@
 import {message,proposal} from './domain.js';
-import {zonedTime} from './reminders.js';
+import {zonedTime,catheterScheduleMatch} from './reminders.js';
+import {resolvePhotoCaptureTime} from './photo-metadata.js';
 import {scheduleTimes,explicitVolume,hasClock} from './catheter-schedule.js';
 export function photoTime(state,text,at=Date.now()){
  const zone=state.settings.timezone||'UTC';const parts=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(at)).map(p=>[p.type,p.value]));
@@ -31,4 +32,31 @@ export function editPhotoReview(state,text){
  if(volume==null&&!timing)return null;
  if(base.params.volume==null&&volume==null)return message('assistant','What amount in mL should I use?');
  return proposal(state,base.careKind,{...base.params,...(volume==null?{}:{volume}),...(timing?{time:timing.time}:{})});
+}
+
+// A bag photo sent with no other request is the user's routine record of a scheduled catheterization.
+// The photo time (camera capture time when present, otherwise the upload time, labelled as such) is
+// matched to the still-unconfirmed scheduled occurrence it follows, and one review is prepared
+// without asking whether the catheterization happened. Nothing is saved until that review is approved.
+export const defaultPhotoRequest=text=>!text||/^(?:help me record this photo\.?|photo attached)$/i.test(text.trim());
+export function bagPhotoTiming(state,photoData,at=Date.now()){
+ const capture=resolvePhotoCaptureTime(photoData?.captureTime,state.settings.timezone||'UTC',at);
+ if(capture&&!capture.usable)return null;
+ const time=capture?.instant||new Date(at).toISOString(),match=catheterScheduleMatch(state,time,at);
+ return match?{time,match,assumption:capture?capture.notice:'The photo has no camera timestamp, so the upload time is used; please check the time.'}:null;
+}
+export function scheduledBagPhotoReview(state,text,photoData,photoId,at=Date.now()){
+ if(!photoId||photoData?.type!=='bag'||photoData.volumeMl==null||!defaultPhotoRequest(text))return null;
+ if(state.proposals.some(p=>p.status==='pending'&&Date.parse(p.expiresAt)>at))return null;
+ if(state.events.some(e=>!e.voided&&e.data?.photoId===photoId))return null;
+ const timing=bagPhotoTiming(state,photoData,at);if(!timing)return null;
+ if(state.events.some(e=>e.kind==='catheterization'&&!e.voided&&e.occurredAt===timing.time))return null;
+ const reply=proposal(state,'catheterization',{volume:photoData.volumeMl,photoId,time:timing.time});
+ const saved=state.proposals.at(-1),notices=[timing.assumption,'Visual estimate from the attached photo; check the scale before approval.'];
+ saved.params.evidence={kind:'photo',quote:text||'',assumptions:notices};
+ saved.details.push(...notices.map(s=>'Interpretation to verify (not saved): '+s));reply.proposal.details=[...saved.details];
+ state.careObservation={photoId,photoData,originalUserText:text,createdAt:at,awaitingReview:false};
+ const taken=new Intl.DateTimeFormat('en-US',{timeZone:state.settings.timezone||'UTC',hour:'numeric',minute:'2-digit'}).format(new Date(timing.time));
+ reply.content=`This looks like a urine bag with about ${photoData.volumeMl} mL. I matched it to your ${timing.match.clock} scheduled catheterization (photo time ${taken}). Approve to record it, or tell me a different time or amount. Nothing has been recorded yet.`;
+ return reply;
 }

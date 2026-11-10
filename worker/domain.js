@@ -1,4 +1,4 @@
-import {reminderTasks,careAgenda} from './reminders.js';
+import {reminderTasks,careAgenda,catheterScheduleMatch} from './reminders.js';
 import { medicationKey, findMedication, parseCareList } from './medications.js';
 export const now = () => new Date(Date.now()).toISOString();
 export const uid = () => crypto.randomUUID();
@@ -44,7 +44,8 @@ export function proposal(state, kind, params) {
   } else if (kind === 'catheterization') {
     params = { volume: params.volume == null ? null : number(params.volume, 'volume in mL', 0, 3000), photoId: params.photoId || null, time: params.time || now() };
     if (!Number.isFinite(Date.parse(params.time))) throw new AppError('Please provide a valid time.');
-    title = 'Record catheterization'; details = [`Time: ${new Intl.DateTimeFormat('en-US',{timeZone:state.settings.timezone||'UTC',dateStyle:'medium',timeStyle:'short'}).format(new Date(params.time))} (${state.settings.timezone||'UTC'})`, ...(params.photoId?['Estimated from the attached bag photo; check the scale before approval']:[]), params.volume == null ? 'Volume not recorded' : `${params.volume} mL`, 'Use one new catheter', state.inventory.find(i=>i.id==='catheter')?.count==null?'Stock count not configured; record use without deducting a balance':'Deduct 1 catheter from your supplies'];
+    const slot=catheterScheduleMatch(state,params.time);
+    title = 'Record catheterization'; details = [`Time: ${new Intl.DateTimeFormat('en-US',{timeZone:state.settings.timezone||'UTC',dateStyle:'medium',timeStyle:'short'}).format(new Date(params.time))} (${state.settings.timezone||'UTC'})`, ...(slot?[`Counts for your ${slot.clock} scheduled catheterization, so that check-in stops asking`]:[]), ...(params.photoId?['Estimated from the attached bag photo; check the scale before approval']:[]), params.volume == null ? 'Volume not recorded' : `${params.volume} mL`, 'Use one new catheter', state.inventory.find(i=>i.id==='catheter')?.count==null?'Stock count not configured; record use without deducting a balance':'Deduct 1 catheter from your supplies'];
   } else if (kind === 'careCorrection') {
     const event=state.events.find(e=>e.id===params.eventId&&!e.voided);if(!event||!['catheterization','supplies','medication','vitals','bag','journalNote','medicationStatus'].includes(event.kind))throw new AppError('Choose an existing care event that can be undone.');params={eventId:event.id};title='Undo incorrect care entry';details=[event.title,event.detail,...(event.stockUntracked?['The original entry did not change a tracked stock balance.']:[]),'Keep the original and a correction in history. Reverse any recorded stock changes after approval.'];
   } else if (kind === 'supplies') {

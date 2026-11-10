@@ -78,11 +78,22 @@ async function loadHistoricalPhoto(img, photoId, generation) {
   const url = URL.createObjectURL(blob); historicalPhotoUrls.add(url); img.src = url;
  } catch(e) { if (generation === photoGeneration && img.isConnected) { const position = chatScroll.capture(); img.replaceWith(node('p','photo-message error-text','Saved photo unavailable. Try reloading this page.')); chatScroll.afterRender(position); error(e.message); } }
 }
-function renderMessages() {
- const scrollPosition = chatScroll.capture();
+// Only the latest turns are rendered, so opening the chat lands on the newest message at once.
+// Earlier turns are added a batch at a time, keeping the turn being read in place.
+const MESSAGE_PAGE = 10; let visibleMessages = MESSAGE_PAGE;
+function showEarlierMessages() {
+ const main = $('#main'), first = ui.messages.querySelector('article[data-message-id]'), top = main.getBoundingClientRect().top;
+ const total = state.messages?.length || 0, added = Math.min(MESSAGE_PAGE, Math.max(0, total - visibleMessages));
+ visibleMessages += MESSAGE_PAGE;
+ renderMessages(first ? {latest:false,id:first.dataset.messageId,offset:first.getBoundingClientRect().top - top,top:main.scrollTop} : undefined);
+ (document.getElementById('see-earlier') || main).focus({preventScroll:true});
+ ui.announcer.textContent = `Showing ${added} earlier message${added === 1 ? '' : 's'}.${total > visibleMessages ? '' : ' This is the start of the conversation.'}`;
+}
+function renderMessages(position) {
+ const scrollPosition = position?.id ? position : chatScroll.capture();
  revokeHistoricalPhotos(); const generation = photoGeneration; const photoLoads = [];
  const fragment = document.createDocumentFragment();
- const messages = state.messages || [];medicationCheckInUI.beginRender();
+ const all = state.messages || [], messages = all.slice(-visibleMessages), earlier = all.length - messages.length;medicationCheckInUI.beginRender();
  for (const message of messages) {
   const row = node('article', `message ${message.role === 'user' ? 'user' : 'assistant'}`); row.dataset.messageId = message.id;
   if (message.role !== 'user') { const mark = node('span','assistant-mark','✳'); mark.setAttribute('aria-hidden','true'); row.append(mark); }
@@ -92,16 +103,17 @@ function renderMessages() {
   if (message.proposal) body.append(proposalCard(message.proposal));
   healthUI.render(body,message);
   if(message.appHelp)onboardingUI.render(body,message.appHelp.topic);
-  medicationCheckInUI.question(body,message,!state.medicationCheckInResume&&[...messages].reverse().find(m=>m.role==='assistant')?.id===message.id);
+  medicationCheckInUI.question(body,message,!state.medicationCheckInResume&&[...all].reverse().find(m=>m.role==='assistant')?.id===message.id);
   if(message.journalResult)journalUI.appendResults(body,message.journalResult);
   if (message.sources?.length) { const sources = node('div','sources'); sources.append(node('strong','','Learn more')); for (const source of message.sources) { try { const url = new URL(source.url,location.origin); if (url.protocol !== 'https:') continue; const a = node('a','',source.title || url.hostname); a.href = url.href; a.target = '_blank'; a.rel = 'noopener noreferrer'; sources.append(a); } catch {} } body.append(sources); }
   const answers=questionChoices(message);
-  if (answers.choices.length) { const options = node('div','quick-replies');options.setAttribute('role','group');options.setAttribute('aria-label','Suggested answers');const currentQuestion=[...messages].reverse().find(m=>m.role==='assistant')?.id;answers.choices.forEach(text=>{const choice=button(text,'',()=>chooseReply(text,answers.reference));choice.dataset.staleQuestion=String(!!answers.reference&&message.id!==currentQuestion);choice.disabled=busy||uploadBusy||recording||choice.dataset.staleQuestion==='true';options.append(choice);});body.append(options);if(answers.reference){body.append(node('p','answer-hint',answers.hint));const other=button('Type or say something else','secondary',()=>{focusComposer(true);ui.announcer.textContent='Type your answer, or select Listen to speak.';});other.dataset.answerControl='true';other.dataset.staleQuestion=String(message.id!==currentQuestion);other.disabled=busy||uploadBusy||recording||other.dataset.staleQuestion==='true';body.append(other);} }
+  if (answers.choices.length) { const options = node('div','quick-replies');options.setAttribute('role','group');options.setAttribute('aria-label','Suggested answers');const currentQuestion=[...all].reverse().find(m=>m.role==='assistant')?.id;answers.choices.forEach(text=>{const choice=button(text,'',()=>chooseReply(text,answers.reference));choice.dataset.staleQuestion=String(!!answers.reference&&message.id!==currentQuestion);choice.disabled=busy||uploadBusy||recording||choice.dataset.staleQuestion==='true';options.append(choice);});body.append(options);if(answers.reference){body.append(node('p','answer-hint',answers.hint));const other=button('Type or say something else','secondary',()=>{focusComposer(true);ui.announcer.textContent='Type your answer, or select Listen to speak.';});other.dataset.answerControl='true';other.dataset.staleQuestion=String(message.id!==currentQuestion);other.disabled=busy||uploadBusy||recording||other.dataset.staleQuestion==='true';body.append(other);} }
   row.append(body); fragment.append(row);
  }
  if (!messages.length) {
   const row = node('article','message assistant'); const mark = node('span','assistant-mark','✳'); mark.setAttribute('aria-hidden','true'); row.append(mark); const body = node('div','message-body'); body.append(node('div','message-meta','LET’S START HERE'),node('p','message-text','I can help you keep track of your day. Choose something below, or tell me what you need.')); const replies = node('div','quick-replies'); ['Log catheterization','Record medication','Add supplies','Invite a caregiver'].forEach(t => replies.append(button(t,'',() => send(t)))); body.append(replies); row.append(body); fragment.append(row);
  }
+ if (earlier > 0) { const more = node('div','earlier-messages'); const show = button(`See earlier messages (${earlier} more)`,'secondary',showEarlierMessages); show.id = 'see-earlier'; more.append(show); fragment.prepend(more); }
  const latestBody=fragment.lastElementChild?.querySelector('.message-body');if(latestBody){appendMedicationResume(latestBody);if(!onboardingUI.offer(latestBody,state))appendCareCheckIn(latestBody);}
  ui.messages.replaceChildren(fragment); photoLoads.forEach(load => load());
  clearTimeout(approvalTimer); const expiry = (state.messages || []).map(m => m.proposal).filter(p => p?.status === 'pending' && Date.parse(p.expiresAt) > Date.now()).map(p => Date.parse(p.expiresAt)); if (expiry.length) approvalTimer = setTimeout(renderMessages, Math.min(...expiry) - Date.now() + 50);
@@ -119,7 +131,7 @@ function proposalCard(proposal) {
 }
 function changesSound(proposal) { return proposal?.kind === 'settings' && proposal.changedSettings?.includes('muted'); }
 function replyText(reply) { if (!reply) return ''; return [reply.content, reply.proposal?.title, ...(reply.proposal?.details || []), reply.proposal?.status === 'pending' ? 'Choose Approve or Cancel, or type or say a correction.' : '',reply.medicationCheckIn?.stage==='selection'?reply.medicationCheckIn.medications.map(m=>`${m.number}. ${m.title}`).join('. '):'',reply.answerHint||''].filter(Boolean).join('. '); }
-function receive(result, soundApproval = false) { if(activePage === 'Conversation') chatScroll.latest(); update(result.state); if (soundApproval && typeof state.settings?.muted === 'boolean') setMute(state.settings.muted); const text = replyText(result.reply); ui.announcer.textContent = text; speak(text); }
+function receive(result, soundApproval = false) { visibleMessages = MESSAGE_PAGE; if(activePage === 'Conversation') chatScroll.latest(); update(result.state); if (soundApproval && typeof state.settings?.muted === 'boolean') setMute(state.settings.muted); const text = replyText(result.reply); ui.announcer.textContent = text; speak(text); }
 async function act(id, decision) {
  if (busy) return; const generation = accountGeneration; const settingsApproval = decision === 'approve' && state.messages?.some(message => message.proposal?.id === id && changesSound(message.proposal)); setBusy(true); error(); stopHandsFree(); chatScroll.latest();
  try { const result = await api(`/api/actions/${encodeURIComponent(id)}`,{method:'POST',body:JSON.stringify({decision})}); receive(result,settingsApproval); }
@@ -409,7 +421,7 @@ ui.account.addEventListener('click',async () => {
   try { await api('/api/session',{method:'DELETE'}); await window.sciappSignOut(); showWelcomeAfterSignOut(); } catch(e) {error(e.message);}
  } else if (config?.clerkPublishableKey) await window.sciappSignIn();
 });
-function clearAccountWork() {lastNotificationDiagnostic=''; journalUI.reset();medicationCheckInUI.reset(); closePhotoOptions(); chatScroll.reset(); notificationBusy = false; pushServerStatus = null; pushStatus = {supported:false,enabled:false,permission:'unknown'}; accountGeneration++; voiceGeneration++; pendingRequests.forEach(controller => controller.abort()); pendingRequests.clear(); clearTimeout(approvalTimer); stopHandsFree(); handsFreePaused = false; if(recognition) {recognition.onend = null; recognition.abort(); recognition = null;} if(recorder?.state === 'recording') recorder.stop(); recorder = null; audioChunks = []; recordStream?.getTracks().forEach(track => track.stop()); resetRecording(); assistantSpeaking = false; window.speechSynthesis?.cancel(); uploadBusy = false; setBusy(false); revokeHistoricalPhotos(); removePhoto({deleteRemote:false}); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; ui.announcer.textContent = ''; ui.app.hidden = true; ui.welcome.hidden = false; switchPage('Conversation'); }
+function clearAccountWork() {visibleMessages = MESSAGE_PAGE; lastNotificationDiagnostic=''; journalUI.reset();medicationCheckInUI.reset(); closePhotoOptions(); chatScroll.reset(); notificationBusy = false; pushServerStatus = null; pushStatus = {supported:false,enabled:false,permission:'unknown'}; accountGeneration++; voiceGeneration++; pendingRequests.forEach(controller => controller.abort()); pendingRequests.clear(); clearTimeout(approvalTimer); stopHandsFree(); handsFreePaused = false; if(recognition) {recognition.onend = null; recognition.abort(); recognition = null;} if(recorder?.state === 'recording') recorder.stop(); recorder = null; audioChunks = []; recordStream?.getTracks().forEach(track => track.stop()); resetRecording(); assistantSpeaking = false; window.speechSynthesis?.cancel(); uploadBusy = false; setBusy(false); revokeHistoricalPhotos(); removePhoto({deleteRemote:false}); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; ui.announcer.textContent = ''; ui.app.hidden = true; ui.welcome.hidden = false; switchPage('Conversation'); }
 function showWelcomeAfterSignOut() {
  clearAccountWork(); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; window.speechSynthesis?.cancel(); ui.app.hidden = true; ui.welcome.hidden = false; ui.account.hidden = true;
 }
@@ -438,6 +450,7 @@ function appendCareCheckIn(parent){
  if(due.length&&!state.messages.at(-1)?.medicationCheckIn)card.append(node('p','','These scheduled items have no confirmed record. Did you complete any of them?'));
  for(const group of state.messages.at(-1)?.medicationCheckIn||state.messages.some(m=>m.proposal?.kind==='medicationBatch'&&m.proposal.status==='pending'&&Date.parse(m.proposal.expiresAt)>Date.now())?[]:agenda.medicationGroups||[]){if(group.medications.some(m=>due.some(t=>t.id===m.occurrenceId)))medicationCheckInUI.group(card,group);}
  for(const task of due.filter(t=>t.kind!=='medication')){const row=node('div','care-due');row.append(node('p','',`${task.title} · ${formatTime(task.dueAt)}`),chatButton('Record this catheterization',`Help me record catheterization scheduled for ${task.dueAt}. Ask whether I did it and the volume.`),button('Dismiss','secondary',()=>dismissReminder([task.id])));card.append(row);}
+ if(due.some(t=>t.kind==='catheterization'))card.append(node('p','answer-hint','Or send a photo of the bag. I read the amount and match it to the scheduled time, so you only approve.'));
  if(agenda.unscheduledMedications.length)card.append(node('p','',`No reminder times: ${agenda.unscheduledMedications.map(m=>m.name).join(', ')}. Tell me the times to add them.`));
  if(visibility.showNotificationSetup)card.append(node('p','','This browser is not connected for notifications. Chat check-ins still work.'),button('Enable notifications on this device','primary',()=>notificationAction('enable')));
  card.append(button('Hide for 30 minutes','secondary',()=>hideCareCheckIn(due.map(t=>t.id))),node('p','answer-hint','Choose a button, or say “hide the check-in for now”. A missing record does not mean a dose was missed.'));

@@ -12,3 +12,5 @@ This product is for people who may have limited use of their hands. Minimize req
 - Test with synthetic data in the isolated test account and Remote Browser. When explicitly authorized, private account copies may be used in that isolated account, with notifications disabled and the fixture removed afterward. Keep all real personal health data and credentials out of Git. Push every released version.
 
 - Dismissing a reminder affects only its selected occurrence. Never infer taken, skipped or completed care, change stock, or disable future reminders from dismissal.
+- A bag photo sent on its own records the scheduled catheterization it follows. A catheterization takes time, so a photo up to three hours after a scheduled time (and before the next one) counts for that occurrence. Prepare the review directly with the read amount; do not ask whether it was done. The approved record, not the photo, clears the check-in.
+- Open the conversation on the latest turns only. Earlier turns load in batches from a See earlier messages control that keeps the reader's place.

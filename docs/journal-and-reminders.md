@@ -71,3 +71,17 @@ History provides category/date filters, original image viewing, comparison of up
 ## Storage boundary
 
 This release searches the existing persistent account ledger rather than introducing a separate clinical database. Image bytes are stored separately in R2, but account metadata and care events still share the account JSON record. A future storage migration should move journal rows and photo metadata into indexed per-account tables before sustained high-volume use approaches D1's row/value limits. The API pagination contract is designed to remain stable through that migration. This release does not establish a clinical archive retention SLA or validate urine appearance as a medical measurement.
+
+## Bag photos and scheduled catheterizations (0.11.5)
+
+A catheterization takes time and its bag photo is taken afterwards, so a record no longer has to fall within 90 minutes of the scheduled time to count. A catheterization record counts for the latest scheduled daily occurrence that started up to three hours before it. If none did, it counts for an occurrence starting within the next 90 minutes. Each record completes at most one occurrence, and records are matched in time order. With a 7:00 AM schedule, a record at any time from 7:00 to 10:00 completes the 7:00 occurrence. Interval reminders are unchanged: any confirmed catheterization restarts the interval.
+
+When a photo is sent with no other request, the image is identified as a urine bag with a readable amount, no review is pending, and the photo time matches a still-unconfirmed occurrence, the server prepares one catheterization review without a model call and without asking whether the catheterization was done. The photo time is the camera capture time when the image carries one (with the existing camera-clock and timezone caveats); otherwise the upload time is used and labelled in the review. The review states which scheduled time it counts for. Nothing is saved, no catheter is deducted and the check-in keeps asking until the review is approved. Time and amount can still be corrected by button or in conversation.
+
+The fast path is skipped, and the conversation handles the photo as before, when the user typed anything with the photo, the amount is unreadable, the camera timestamp is in the future, the photo already has an approved entry, another review is pending, or the time is not near a scheduled occurrence. In the conversational path the same server-computed match is supplied to the model as `photoEvidence.scheduleMatch`.
+
+Not validated: live vision accuracy of the amount on real bags, and behaviour on a physical phone. The matching and review logic is covered by `test/catheter-photo-match.test.js` with synthetic data.
+
+## Conversation length (0.11.5)
+
+The conversation renders only the latest ten turns, so it opens on the newest message instead of laying out the whole history and scrolling down. A See earlier messages control at the top adds ten older turns at a time, keeps the turn being read in place, keeps keyboard focus on the control and announces the change. Sending a message or receiving a reply returns to the latest ten. This also limits how many saved photos are fetched on each render. Covered by `test/browser/scroll.spec.js`.

@@ -38,7 +38,8 @@ test('long mobile chat keeps latest turn visible on send and failed reply withou
 test('returning to conversation and expiry re-render preserve an older turn being read',async({page})=>{
  const state=await longConversation(page);
  // Force a near-term proposal expiry to exercise the real re-render timer.
- state.messages[0].proposal={id:'synthetic-review',status:'pending',expiresAt:new Date(Date.now()+2500).toISOString(),title:'Synthetic review',details:['No record is changed.']};
+ // The review sits in the oldest rendered turn; only the latest ten turns are rendered.
+ state.messages[30].proposal={id:'synthetic-review',status:'pending',expiresAt:new Date(Date.now()+2500).toISOString(),title:'Synthetic review',details:['No record is changed.']};
  await page.reload();await expect(page.locator('#app')).toBeVisible();await page.evaluate(()=>document.fonts.ready);
  await page.locator('#main').evaluate(el=>{el.dispatchEvent(new WheelEvent('wheel'));el.scrollTop=900;});
  await expect.poll(async()=>(await metrics(page)).top).toBeGreaterThan(850);
@@ -78,4 +79,32 @@ test('late photo/card growth and working-indicator changes keep latest visible w
  await page.locator('#late-card').evaluate(el=>el.style.height='1100px');
  await page.setViewportSize({width:412,height:600});
  await expect.poll(async()=>Math.abs((await metrics(page)).top-before)).toBeLessThan(3);
+});
+
+test('chat opens on the latest turns and loads earlier ones in batches without moving the turn being read',async({page})=>{
+ await longConversation(page);
+ const rows=page.locator('#messages article');
+ // Only the newest ten of forty turns are rendered, and the newest is already in view.
+ await expect(rows).toHaveCount(10);await expect(rows.last()).toHaveAttribute('data-message-id','message-39');
+ expect((await metrics(page)).bottom).toBeLessThan(3);
+ const more=page.getByRole('button',{name:'See earlier messages (30 more)',exact:true});
+ await more.scrollIntoViewIfNeeded();
+ const offset=()=>page.locator('#messages article[data-message-id="message-30"]').evaluate(el=>el.getBoundingClientRect().top-document.querySelector('#main').getBoundingClientRect().top);
+ const before=await offset();
+ expect((await more.boundingBox()).height).toBeGreaterThanOrEqual(48);
+ await more.click();
+ await expect(rows).toHaveCount(20);await expect(rows.first()).toHaveAttribute('data-message-id','message-20');
+ await expect.poll(async()=>Math.abs(await offset()-before)).toBeLessThan(3);
+ // Keyboard and screen-reader users keep their place on the control and hear what changed.
+ await expect(page.getByRole('button',{name:'See earlier messages (20 more)',exact:true})).toBeFocused();
+ await expect(page.locator('#announcer')).toHaveText('Showing 10 earlier messages.');
+ await page.keyboard.press('Enter');await expect(rows).toHaveCount(30);
+ await page.keyboard.press('Enter');await expect(rows).toHaveCount(40);
+ await expect(page.getByRole('button',{name:/See earlier messages/})).toHaveCount(0);
+ await expect(page.locator('#announcer')).toHaveText('Showing 10 earlier messages. This is the start of the conversation.');
+ // Sending returns to the short, latest view.
+ const input=page.getByRole('textbox',{name:'Message your care companion'});
+ await input.fill('A new synthetic turn');await input.press('Control+Enter');
+ await expect(page.locator('#messages').getByText('Latest reply, kept in view.',{exact:true})).toBeVisible();
+ await expect(rows).toHaveCount(10);await expect.poll(async()=>(await metrics(page)).bottom).toBeLessThan(3);
 });
