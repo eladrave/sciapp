@@ -4,7 +4,7 @@ import { refreshDirectory } from './health-providers.js';
 import { processTranscriptions } from './resource-transcription.js';
 import { uploadResource, materialInput, resourceDownload, MAX_FILE_BYTES } from './resource-files.js';
 import { AppError, now, uid } from './domain.js';
-import { processIndexJobs, splitText } from './retrieval.js';
+import { processIndexJobs, chunkInsertStatements } from './retrieval.js';
 export const ADMIN_COOKIE='__Host-sciapp-admin';
 export const defaults={retrievalThreshold:0.65,resourceReviewDays:180};
 const bytes=text=>new TextEncoder().encode(text);
@@ -115,7 +115,7 @@ export async function adminRoute(request,env,ctx,{json,bodyJSON,form,version}){
    const status=action==='archive'?'archived':'published',stamp=now(),revision=uid();
    await env.DB.prepare('INSERT OR IGNORE INTO resource_publication(source_id,status,updated_at) VALUES(?,?,?)').bind(id,row.status,stamp).run();
    const statements=[env.DB.prepare('UPDATE resource_publication SET status=?,reviewed_at=CASE WHEN ?=\'published\' THEN ? ELSE reviewed_at END,reviewed_by=CASE WHEN ?=\'published\' THEN \'admin\' ELSE reviewed_by END,updated_at=?,version=version+1,revision_id=? WHERE source_id=? AND version=?').bind(status,status,stamp,status,stamp,revision,id,data.version)];
-   if(action==='publish')for(const [i,chunk] of splitText(row.body).entries())statements.push(env.DB.prepare('INSERT OR IGNORE INTO retrieval_chunks(id,source_id,scope,body) SELECT ?,?,\'shared\',? WHERE EXISTS(SELECT 1 FROM resource_publication WHERE source_id=? AND revision_id=?)').bind(`${id}-${i}`,id,chunk,id,revision));
+   if(action==='publish')statements.push(...chunkInsertStatements(env,id,row.body,'EXISTS(SELECT 1 FROM resource_publication WHERE source_id=? AND revision_id=?)',[id,revision]));
    statements.push(audit(env,`resource_${action}_attempt`,id));const changes=await env.DB.batch(statements);
    if(changes[0].meta.changes!==1)throw new AppError('This resource changed. Reload before saving.',409);
    ctx.waitUntil(processIndexJobs(env,8));return json({ok:true});

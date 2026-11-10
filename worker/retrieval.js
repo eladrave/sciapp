@@ -4,7 +4,9 @@ export const EMBEDDING_MODEL='@cf/baai/bge-base-en-v1.5';
 export const retrievalReady=env=>!!(env.DB&&env.AI&&env.PERSONAL_MEMORY&&env.SHARED_RESOURCES);
 const digest=async text=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)))].map(v=>v.toString(16).padStart(2,'0')).join('');
 export const ownerNamespace=async id=>'u-'+(await digest(id)).slice(0,48);
-export function splitText(text){const source=/^WEBVTT\b|\d{2}:\d{2}[^\n]*-->/m.test(text)?text.split(/\r?\n/).filter(line=>line.trim()&&!/^(?:WEBVTT|\d+$|\d{2}:\d{2}[^\n]*-->)/.test(line.trim())).join(' '):text;return source.match(/[\s\S]{1,500}/g)||[];}
+export function splitText(text){const source=/^WEBVTT\b|\d{2}:\d{2}[^\n]*-->/m.test(text)?text.split(/\r?\n/).filter(line=>line.trim()&&!/^(?:WEBVTT|\d+$|\d{2}:\d{2}[^\n]*-->)/.test(line.trim())).join(' '):text;return (source.match(/[\s\S]{1,500}(?=\s|$)|[\s\S]{1,500}/g)||[]).map(chunk=>chunk.trim()).filter(Boolean);}
+// Inserts every chunk of a long text in a few statements: each statement carries up to 100 chunks as one JSON value.
+export function chunkInsertStatements(env,sourceId,body,guardSql,guardParams){const chunks=splitText(body),statements=[];for(let offset=0;offset<chunks.length;offset+=100)statements.push(env.DB.prepare(`INSERT OR IGNORE INTO retrieval_chunks(id,source_id,scope,body) SELECT ?||'-'||CAST(key+? AS INTEGER),?,'shared',value FROM json_each(?) WHERE ${guardSql}`).bind(sourceId,offset,sourceId,JSON.stringify(chunks.slice(offset,offset+100)),...guardParams));return statements;}
 export async function memorySettings(env,id){const row=await env.DB.prepare('SELECT backfilled,last_sync_at FROM memory_settings WHERE account_id=?').bind(id).first();return {enabled:1,backfilled:row?.backfilled||0,last_sync_at:row?.last_sync_at||0};}
 export async function resourceAdmin(env,id){return !!await env.DB.prepare('SELECT account_id FROM resource_admins WHERE account_id=?').bind(id).first();}
 async function addSource(env,{id,scope,accountId=null,title,url=null,body,observedAt=null}){
@@ -45,24 +47,33 @@ export async function addResource(env,id,data){
  const sourceId='r-'+crypto.randomUUID();await addSource(env,{id:sourceId,scope:'shared',title:clean.title,url:clean.url,body:clean.text});return {id:sourceId,pendingIndex:true};
 }
 async function embed(env,text){const r=await env.AI.run(EMBEDDING_MODEL,{text:[text]});const v=r.data?.[0];if(!Array.isArray(v)||v.length!==768||v.some(n=>!Number.isFinite(n)))throw Error('Invalid embedding response');return v;}
+const validVector=v=>Array.isArray(v)&&v.length===768&&v.every(n=>Number.isFinite(n));
+async function embedMany(env,texts){const r=await env.AI.run(EMBEDDING_MODEL,{text:texts});if(!Array.isArray(r.data)||r.data.length!==texts.length||!r.data.every(validVector))throw Error('Invalid embedding response');return r.data;}
+// Indexes pending chunks. New chunks are embedded and stored together, so a whole book is indexed in
+// minutes; if a group fails, each chunk is retried on its own so one bad chunk cannot hold back the rest.
+// Returns how many jobs were claimed, so a caller can keep going while there is work.
 export async function processIndexJobs(env,max=4){
- if(!retrievalReady(env))return;
- const jobs=await env.DB.prepare('SELECT * FROM retrieval_chunks WHERE NOT EXISTS(SELECT 1 FROM resource_publication WHERE source_id=retrieval_chunks.source_id AND status!=\'published\') AND (indexed_at IS NULL OR deleted_at IS NOT NULL) AND next_attempt_at<=? AND lease_until<? ORDER BY next_attempt_at, id LIMIT ?').bind(Date.now(),Date.now(),max).all();
- for(const job of jobs.results){
-  const lease=Date.now()+60000;const claim=await env.DB.prepare('UPDATE retrieval_chunks SET lease_until=? WHERE id=? AND lease_until<?').bind(lease,job.id,Date.now()).run();if(claim.meta.changes!==1)continue;
+ if(!retrievalReady(env))return 0;
+ const jobs=(await env.DB.prepare('SELECT * FROM retrieval_chunks WHERE NOT EXISTS(SELECT 1 FROM resource_publication WHERE source_id=retrieval_chunks.source_id AND status!=\'published\') AND (indexed_at IS NULL OR deleted_at IS NOT NULL) AND next_attempt_at<=? AND lease_until<? ORDER BY next_attempt_at, id LIMIT ?').bind(Date.now(),Date.now(),max).all()).results;
+ if(!jobs.length)return 0;
+ const lease=Date.now()+60000+Math.floor(Math.random()*1000),ids=JSON.stringify(jobs.map(j=>j.id));
+ await env.DB.prepare('UPDATE retrieval_chunks SET lease_until=? WHERE id IN (SELECT value FROM json_each(?)) AND lease_until<?').bind(lease,ids,Date.now()).run();
+ const claimed=(await env.DB.prepare('SELECT * FROM retrieval_chunks WHERE lease_until=? AND id IN (SELECT value FROM json_each(?)) ORDER BY next_attempt_at, id').bind(lease,ids).all()).results;
+ const retry=async job=>{await env.DB.prepare('UPDATE retrieval_chunks SET attempts=attempts+1,next_attempt_at=?,lease_until=0 WHERE id=?').bind(Date.now()+Math.min(3600000,30000*2**Math.min(job.attempts,7)),job.id).run();console.warn(JSON.stringify({event:'retrieval_index_retry',scope:job.scope}));};
+ const indexOf=job=>job.scope==='personal'?env.PERSONAL_MEMORY:env.SHARED_RESOURCES;
+ const namespaceOf=async job=>job.scope==='personal'?await ownerNamespace(job.account_id):'shared';
+ const one=async job=>{try{const values=await embed(env,job.body);await indexOf(job).upsert([{id:job.id,values,namespace:await namespaceOf(job)}]);await env.DB.prepare('UPDATE retrieval_chunks SET indexed_at=?,lease_until=0 WHERE id=? AND deleted_at IS NULL').bind(now(),job.id).run();}catch{await retry(job);}};
+ for(const job of claimed.filter(j=>j.deleted_at)){try{await indexOf(job).deleteByIds([job.id]);await env.DB.prepare('DELETE FROM retrieval_chunks WHERE id=? AND deleted_at IS NOT NULL').bind(job.id).run();}catch{await retry(job);}}
+ for(const scope of ['personal','shared']){
+  const group=claimed.filter(j=>!j.deleted_at&&j.scope===scope);if(!group.length)continue;
+  if(group.length===1){await one(group[0]);continue;}
   try{
-   const index=job.scope==='personal'?env.PERSONAL_MEMORY:env.SHARED_RESOURCES;
-   if(job.deleted_at){await index.deleteByIds([job.id]);await env.DB.prepare('DELETE FROM retrieval_chunks WHERE id=? AND deleted_at IS NOT NULL').bind(job.id).run();}
-   else{
-    const values=await embed(env,job.body);const namespace=job.scope==='personal'?await ownerNamespace(job.account_id):'shared';
-    await index.upsert([{id:job.id,values,namespace}]);
-    await env.DB.prepare('UPDATE retrieval_chunks SET indexed_at=?,lease_until=0 WHERE id=? AND deleted_at IS NULL').bind(now(),job.id).run();
-   }
-  }catch{
-   await env.DB.prepare('UPDATE retrieval_chunks SET attempts=attempts+1,next_attempt_at=?,lease_until=0 WHERE id=?').bind(Date.now()+Math.min(3600000,30000*2**Math.min(job.attempts,7)),job.id).run();
-   console.warn(JSON.stringify({event:'retrieval_index_retry',scope:job.scope}));
-  }
+   const vectors=await embedMany(env,group.map(j=>j.body)),rows=[];for(const [i,job] of group.entries())rows.push({id:job.id,values:vectors[i],namespace:await namespaceOf(job)});
+   await indexOf(group[0]).upsert(rows);
+   await env.DB.prepare('UPDATE retrieval_chunks SET indexed_at=?,lease_until=0 WHERE id IN (SELECT value FROM json_each(?)) AND deleted_at IS NULL').bind(now(),JSON.stringify(group.map(j=>j.id))).run();
+  }catch{for(const job of group)await one(job);}
  }
+ return claimed.length;
 }
 export async function publishedFallback(env,text){
  const found=[];for(const source of retrieve(text)){const row=await env.DB.prepare("SELECT status FROM resource_publication WHERE source_id=?").bind('seed-'+source.id).first();if(!row||row.status==='published')found.push(source);}return found;
@@ -115,8 +126,8 @@ export async function syncMemoryAccounts(env,max=4){
  for(const row of rows.results){await archiveMessages(env,row.id,JSON.parse(row.state).messages);await env.DB.prepare('INSERT INTO memory_settings(account_id,enabled,backfilled,last_sync_at) VALUES(?,1,1,?) ON CONFLICT(account_id) DO UPDATE SET backfilled=1,last_sync_at=MAX(memory_settings.last_sync_at,excluded.last_sync_at)').bind(row.id,Date.parse(row.updated_at)).run();}
 }
 
-export function resourceInput(data){
- if(!data||typeof data.title!=='string'||!data.title.trim()||data.title.length>200||typeof data.text!=='string'||data.text.trim().length<30||data.text.length>120000)throw new AppError('Provide a title and resource text between 30 and 120,000 characters.');
+export function resourceInput(data,maxText=120000){
+ if(!data||typeof data.title!=='string'||!data.title.trim()||data.title.length>200||typeof data.text!=='string'||data.text.trim().length<30||data.text.length>maxText)throw new AppError(`Provide a title and resource text between 30 and ${maxText.toLocaleString('en-US')} characters.`);
  let url;try{url=new URL(data.url);if(url.protocol!=='https:'||url.username||url.password)throw Error();}catch{throw new AppError('Provide an HTTPS source URL.');}
  return {title:data.title.trim(),url:url.href,text:data.text.trim()};
 }

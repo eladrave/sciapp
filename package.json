@@ -1,6 +1,6 @@
 {
   "name": "sciapp",
-  "version": "0.11.9",
+  "version": "0.11.10",
   "description": "Accessible conversational care companion for people with spinal cord injuries.",
   "scripts": {
     "build": "node scripts/build.mjs",

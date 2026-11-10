@@ -3,7 +3,9 @@ import { unzipSync, strFromU8 } from 'fflate';
 import { AppError, now, uid } from './domain.js';
 import { resourceInput } from './retrieval.js';
 export const MAX_FILE_BYTES=10*1024*1024;
-export const MAX_RESOURCE_TEXT=120000;
+// A whole book is accepted. D1 stores a row of at most 2 MB, so the text is capped by characters and bytes.
+export const MAX_RESOURCE_TEXT=1500000,MAX_RESOURCE_BYTES=1900000;
+export const resourceTextTooLarge=text=>text.length>MAX_RESOURCE_TEXT||new TextEncoder().encode(text).length>MAX_RESOURCE_BYTES;
 const types={...mediaTypes,pdf:'application/pdf',pptx:'application/vnd.openxmlformats-officedocument.presentationml.presentation',docx:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',odt:'application/vnd.oasis.opendocument.text',doc:'application/msword',ppt:'application/vnd.ms-powerpoint',txt:'text/plain',md:'text/markdown',vtt:'text/vtt',srt:'application/x-subrip'};
 export function fileType(name,data){
  const extension=name.toLowerCase().split('.').at(-1);if(!Object.hasOwn(types,extension))throw new AppError('Upload PDF, PPTX, DOCX, ODT, DOC, PPT, TXT, MD, VTT, SRT, MP3, WAV, M4A, MP4, WebM, OGG or FLAC files.',415);
@@ -35,8 +37,9 @@ export async function extractResource(env,name,data){
   else note='Original file saved. Add a reviewed summary, or convert this file to PDF, PPTX or DOCX for text extraction.';
  }catch{note='Original file saved, but text extraction was unsuccessful. Add a reviewed summary or transcript before publishing.';}
  text=text.replace(/\u0000/g,'').trim();
- if(text.length>MAX_RESOURCE_TEXT)return {mime,text:'',status:'needs_text',note:`Original file saved. Extracted text exceeds ${MAX_RESOURCE_TEXT.toLocaleString('en-US')} characters; select an excerpt or add a summary. Nothing was silently truncated.`};
+ if(resourceTextTooLarge(text))return {mime,text:'',status:'needs_text',note:`Original file saved. Extracted text exceeds ${MAX_RESOURCE_TEXT.toLocaleString('en-US')} characters; split the document into parts, or add an excerpt or summary. Nothing was silently truncated.`};
  if(text.length<30)return {mime,text:'',status:'needs_text',note:note||'No sufficient readable text found. Add a summary or transcript before publishing.'};
+ if(text.length>120000)note=`Extracted ${text.length.toLocaleString('en-US')} characters from the whole document. Images and figures are not included; spot-check the text against the original.`;
  return {mime,text,status:'extracted',note:note||'Review this text before publishing. Transcript timestamps are retained when supplied.'};
 }
 export async function uploadResource(env,file){
@@ -52,7 +55,7 @@ export async function materialInput(env,data){
  let upload=null;if(data.uploadId){if(typeof data.uploadId!=='string')throw new AppError('Choose a valid uploaded file.');upload=await env.DB.prepare('SELECT id,mime_type FROM resource_uploads WHERE id=?').bind(data.uploadId).first();if(!upload)throw new AppError('Uploaded file not found.',404);}
  if(kind==='document'&&!upload)throw new AppError('Upload the original document first.');
  const ownFile=kind==='document'||kind==='video'&&upload&&!data.url&&/^(audio|video)\//.test(upload.mime_type);
- const clean=resourceInput({...data,url:ownFile?'https://resource.invalid/file':data.url});
+ const clean=resourceInput({...data,url:ownFile?'https://resource.invalid/file':data.url},MAX_RESOURCE_TEXT);if(resourceTextTooLarge(clean.text))throw new AppError('This text is too large to store. Split the document into parts.');
  return {...clean,url:ownFile?'/api/resources/files/'+upload.id:clean.url,kind,textKind,uploadId:upload?.id||null};
 }
 export async function resourceDownload(env,id,{admin=false}={}){
