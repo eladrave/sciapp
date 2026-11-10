@@ -23,3 +23,11 @@ test('Today lists only reminders due on the current local day in the account tim
  assert.deepEqual(todaysReminders(tasks,'America/New_York',at).map(t=>t.id),['t1','t2','t3','t4']);
  assert.deepEqual(todaysReminders(undefined,'UTC',at),[]);
 });
+test('Today groups medicines that share a scheduled time into one row',async()=>{
+ const {groupReminders}=await import('../web/check-in-state.js');const at=Date.parse('2026-11-10T12:00:00Z');
+ const tasks=[{id:'c1',kind:'catheterization',title:'Catheterization',dueAt:'2026-11-10T12:00:00Z'},{id:'a',kind:'medication',title:'Alpha 5 mg',dueAt:'2026-11-10T13:30:00Z'},{id:'b',kind:'medication',title:'Beta 10 mg',dueAt:'2026-11-10T13:30:00Z'},{id:'g',kind:'medication',title:'Gamma 1 mg',dueAt:'2026-11-10T13:30:00Z'},{id:'c2',kind:'catheterization',title:'Catheterization',dueAt:'2026-11-10T13:30:00Z'},{id:'d',kind:'medication',title:'Alpha 5 mg',dueAt:'2026-11-10T17:00:00Z'}];
+ const rows=groupReminders(tasks,{g:'2026-11-12T00:00:00Z',b:'2026-11-09T00:00:00Z'},at);
+ assert.deepEqual(rows.map(r=>r.ids),[['c1'],['a','b'],['g'],['c2'],['d']]);
+ assert.deepEqual(rows.map(r=>r.dismissed),[false,false,true,false,false]);assert.deepEqual(rows[1].titles,['Alpha 5 mg','Beta 10 mg']);
+ assert.deepEqual(groupReminders(undefined),[]);
+});

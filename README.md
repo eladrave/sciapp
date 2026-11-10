@@ -112,6 +112,8 @@ Version 0.11.0 groups medication check-ins by scheduled time, supports all/some 
 
 Version 0.11.3 keeps the latest chat in view through delayed photo/card layout and offers occurrence-specific reminder dismissal by button or voice, without recording care or disabling future schedules. Version 0.11.2 preserves reported medication selections across interrupted questions, resumes only the missing timing/review step, and prevents competing or empty check-in cards. Check-ins can be hidden for 30 minutes without recording care. Version 0.11.1 makes doctor reports PDF only, with full-page original-resolution images and readable dated notes. It also replaces vague notification blocking messages with browser-reported permission states and account-scoped technical setup diagnostics. See [journal and reminders](docs/journal-and-reminders.md).
 
+Version 0.11.8 groups medicines that share a scheduled time into one row in the Today reminder list, with one Dismiss all control for that time. Dismissed and still-open medicines stay in separate rows.
+
 Version 0.11.7 limits the Today page to today. Its reminder list shows only reminders due on the current local day in the account timezone, with clock times only; tomorrow and later days no longer appear there.
 
 Version 0.11.6 answers questions in words instead of showing journal cards. Asking how much urine was recorded today, since 7 AM or in any period returns the total and each amount, added up by the server from approved records; unapproved bag photos are mentioned but never counted. Journal lookups accept a local clock window, and journal cards appear only when records, photos or the journal are asked for.

@@ -1,5 +1,5 @@
 import {createOnboardingUI} from './onboarding.js';
-import {careCheckInState,todaysReminders} from './check-in-state.js';
+import {careCheckInState,todaysReminders,groupReminders} from './check-in-state.js';
 import {createMedicationCheckInUI} from './medication-checkin.js';
 import {createJournalUI} from './journal.js';
 import { questionChoices } from './question-choices.js';
@@ -220,7 +220,14 @@ function appendReminders(panel) {
  if(state.settings.catheterScheduleMode==='daily'&&state.settings.catheterTimes?.length)card.append(node('p','',`Catheterization every day: ${state.settings.catheterTimes.join(', ')}`));
  const tasks = todaysReminders(state.reminderTasks,state.settings.timezone);
  const clock=value=>new Date(value).toLocaleTimeString([],{hour:'numeric',minute:'2-digit',timeZone:state.settings.timezone||undefined});
- for (const task of tasks) {const row=node('div','care-due');row.append(node('p','',`${task.title} · ${clock(task.dueAt)}`));if(Date.parse(state.reminderDismissals?.[task.id])>Date.now())row.append(node('p','','Reminder dismissed for this occurrence.'));else row.append(button('Dismiss','secondary',()=>dismissReminder([task.id])));card.append(row);}
+ for (const group of groupReminders(tasks,state.reminderDismissals)) {
+  const row=node('div','care-due'),many=group.ids.length>1,time=clock(group.dueAt);
+  row.append(node('p','',many?`${time} · ${group.ids.length} medications`:`${group.titles[0]} · ${time}`));
+  if(many)row.append(node('p','',group.titles.join(', ')));
+  if(group.dismissed)row.append(node('p','',many?'Reminders dismissed for this time only.':'Reminder dismissed for this occurrence.'));
+  else{const dismiss=button(many?`Dismiss all ${group.ids.length}`:'Dismiss','secondary',()=>dismissReminder(group.ids));dismiss.setAttribute('aria-label',many?`Dismiss all ${group.ids.length} medication reminders for ${time}`:`Dismiss ${group.titles[0]} reminder for ${time}`);row.append(dismiss);}
+  card.append(row);
+ }
  if (!tasks.length) card.append(node('p','',(state.reminderTasks||[]).length?'No more reminders today.':'No reminders set. Set exact medication times or start catheterization reminders.'));
  card.append(chatButton(state.settings.catheterRemindersEnabled ? 'Stop catheter reminders' : 'Start catheter reminders',state.settings.catheterRemindersEnabled ? 'Stop catheter reminders' : 'Start catheter reminders'));
  card.append(chatButton('Set timezone','Change my timezone')); panel.append(card);

@@ -18,3 +18,15 @@ export function todaysReminders(tasks,timezone,at=Date.now()){
  const day=value=>new Intl.DateTimeFormat('en-CA',{timeZone:timezone||undefined,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));
  const today=day(at);return (tasks||[]).filter(t=>day(t.dueAt)===today);
 }
+
+// Medicines scheduled for the same instant form one row, so the list stays short. Dismissed and
+// still-open medicines stay in separate rows; a dismissal never spreads to another occurrence.
+export function groupReminders(tasks,dismissals={},at=Date.now()){
+ const rows=[],byKey=new Map();
+ for(const task of tasks||[]){
+  const dismissed=Date.parse(dismissals?.[task.id])>at,key=task.kind==='medication'?`med|${task.dueAt}|${dismissed}`:task.id;
+  let row=byKey.get(key);if(!row){row={kind:task.kind,dueAt:task.dueAt,dismissed,titles:[],ids:[]};byKey.set(key,row);rows.push(row);}
+  row.titles.push(task.title);row.ids.push(task.id);
+ }
+ return rows;
+}
