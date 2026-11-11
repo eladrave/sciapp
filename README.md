@@ -112,6 +112,8 @@ Version 0.11.0 groups medication check-ins by scheduled time, supports all/some 
 
 Version 0.11.3 keeps the latest chat in view through delayed photo/card layout and offers occurrence-specific reminder dismissal by button or voice, without recording care or disabling future schedules. Version 0.11.2 preserves reported medication selections across interrupted questions, resumes only the missing timing/review step, and prevents competing or empty check-in cards. Check-ins can be hidden for 30 minutes without recording care. Version 0.11.1 makes doctor reports PDF only, with full-page original-resolution images and readable dated notes. It also replaces vague notification blocking messages with browser-reported permission states and account-scoped technical setup diagnostics. See [journal and reminders](docs/journal-and-reminders.md).
 
+Version 0.13.4 keeps a written answer that ran into the model's output limit (trimmed to its last complete sentence, with an offer to continue) instead of failing with "The AI response was incomplete", and asks the assistant for focused answers of about 250 words.
+
 Version 0.13.3 states the assistant's role as a companion: help with any question or task using the resources, the journal and personal memory; when the resources are silent, answer from general knowledge and say so; close health answers with a short reminder to check with the doctor or care team; acknowledge and reuse stated preferences; and answer prescription renewal questions from the supply forecast, which now includes a run-out date.
 
 Version 0.13.2 stops a reply about the user's own records from citing resources or showing figures.

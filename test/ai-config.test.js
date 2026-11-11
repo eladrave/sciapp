@@ -45,3 +45,16 @@ test('Anthropic discovery includes its required API version header',async()=>{
  globalThis.fetch=async(url,options)=>{assert.equal(url,'https://api.anthropic.com/v1/models');assert.equal(options.headers['anthropic-version'],'2023-06-01');return Response.json({data:[{id:'claude-haiku-5-5'}]});};
  try{const result=await discoverModels({}, {...aiDefaults,baseUrl:'https://api.anthropic.com/v1'},'synthetic-key');assert.deepEqual(result.models,['claude-haiku-5-5']);}finally{globalThis.fetch=original;}
 });
+test('an answer cut by the output limit is kept to its last complete sentence; a cut tool call is not',async()=>{
+ const {cutAnswer,openAIResponse}=await import('../worker/ai-config.js');
+ const long='Plan ahead with the airline. '.repeat(20)+'Then at the airport you should ask for';
+ const kept=cutAnswer(long);assert.match(kept,/Plan ahead with the airline\.\n\nI had more to say but ran out of room\./);assert.equal(kept.includes('you should ask for'),false);
+ assert.equal(cutAnswer('Too short.'),'');assert.equal(cutAnswer(null),'');
+ const config=aiDefaults;
+ const respond=body=>async()=>Response.json(body);
+ const env={OPENAI_API_KEY:'synthetic'};
+ const cut=await openAIResponse(env,config,{model:'m'},respond({status:'incomplete',incomplete_details:{reason:'max_output_tokens'},output:[{type:'message',content:[{type:'output_text',text:long}]}]}));
+ assert.match(cut.response,/ran out of room/);assert.deepEqual(cut.tool_calls,[]);
+ await assert.rejects(openAIResponse(env,config,{model:'m'},respond({status:'incomplete',incomplete_details:{reason:'max_output_tokens'},output:[{type:'function_call',call_id:'c',name:'x',arguments:'{'}]})),e=>e.status===503);
+ await assert.rejects(openAIResponse(env,config,{model:'m'},respond({status:'failed',output:[{type:'message',content:[{type:'output_text',text:long}]}]})),e=>e.status===503);
+});

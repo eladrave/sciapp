@@ -34,12 +34,20 @@ async function providerRequest(env,config,path,body,fetcher=fetch,keyOverride){
  return readJSON(response,2000000);
 }
 export async function discoverModels(env,input,key){const config=validateAI({...aiDefaults,...input});if(key!==undefined&&(typeof key!=='string'||key.length>4096||/[\r\n]/.test(key)))throw new AppError('Invalid API key.');const result=await providerRequest(env,config,'/models',null,fetch,key);if(!Array.isArray(result.data))throw new AppError('This provider did not return an OpenAI-compatible model list.',502);return {models:[...new Set(result.data.map(m=>m.id).filter(id=>typeof id==='string'&&id.length<=200))].sort().slice(0,1000)};}
+// A written answer that ran into the output limit is still useful: keep it up to its last complete
+// sentence or line and say it was shortened. A cut-off tool call is never used.
+export function cutAnswer(text){
+ const value=String(text||'');if(value.trim().length<200)return '';
+ const end=Math.max(value.lastIndexOf('\n'),...['. ','! ','? ','.\n'].map(mark=>{const i=value.lastIndexOf(mark);return i<0?-1:i+1;}));
+ const kept=(end>value.length*0.5?value.slice(0,end):value).trimEnd();
+ return kept+'\n\nI had more to say but ran out of room. Ask me to continue, or ask about one part.';
+}
 // Provider errors never include upstream bodies, request content, or credentials.
 export async function openAIResponse(env,config,payload,fetcher=fetch){
  const result=await providerRequest(env,config,'/responses',{store:false,...payload},fetcher);
- if(result.status!=='completed')throw new AppError('The AI response was incomplete. No action was taken. Please retry.',503);
  const calls=(result.output||[]).filter(item=>item.type==='function_call');
- const text=(result.output||[]).filter(item=>item.type==='message').flatMap(item=>item.content||[]).filter(item=>item.type==='output_text').map(item=>item.text).join('\n');
+ let text=(result.output||[]).filter(item=>item.type==='message').flatMap(item=>item.content||[]).filter(item=>item.type==='output_text').map(item=>item.text).join('\n');
+ if(result.status!=='completed'){const cut=result.status==='incomplete'&&result.incomplete_details?.reason==='max_output_tokens'&&!calls.length?cutAnswer(text):'';if(!cut)throw new AppError('The AI response was incomplete. No action was taken. Please retry.',503);text=cut;}
  if(!calls.length&&!text)throw new AppError('The AI returned no usable response. Please retry.',503);
  return {response:text,tool_calls:calls.map(c=>({id:c.call_id,name:c.name,arguments:c.arguments}))};
 }
@@ -59,7 +67,9 @@ export async function photoResponse(env,payload){
 
 async function completionResponse(env,config,payload,model,effort){
  const data=await providerRequest(env,config,'/chat/completions',{model,messages:payload.messages,max_tokens:config.maxOutputTokens,...(effort==='omit'?{}:{reasoning_effort:effort}),...(payload.tools?{tools:payload.tools.map(t=>({type:'function',function:t})),parallel_tool_calls:false}:{})});
- const choice=data.choices?.[0];if(!choice||!['stop','tool_calls'].includes(choice.finish_reason))throw new AppError('The AI response was incomplete. No action was taken.',503);
+ const choice=data.choices?.[0];
+ if(choice?.finish_reason==='length'&&!choice.message?.tool_calls?.length){const cut=cutAnswer(choice.message?.content);if(cut)return {response:cut,tool_calls:[]};}
+ if(!choice||!['stop','tool_calls'].includes(choice.finish_reason))throw new AppError('The AI response was incomplete. No action was taken.',503);
  return {response:choice.message?.content||'',tool_calls:choice.message?.tool_calls||[]};
 }
 
