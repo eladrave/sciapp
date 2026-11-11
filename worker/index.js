@@ -1,4 +1,5 @@
 import {appHelp,completeOnboarding} from './onboarding.js';
+import {createInvite,acceptInvite,listSharing,endSharing,cancelInvites,sharedDayFor} from './care-sharing.js';
 import {careInsights} from './insights.js';
 import {adHelp} from './ad-help.js';
 import {autoSave,undoSaved,correctSaved} from './auto-save.js';
@@ -99,7 +100,7 @@ export default {
       if (!configuredOrigins(env,url.origin).includes(url.origin))return json({error:'This hostname is not configured for SCIapp.'},421);
       const canonical=canonicalHome(request,env);
       if(canonical)return new Response(null,{status:302,headers:{...security,Location:canonical}});
-      if (path === '/api/health') {const {settings}=await aiConfiguration(env);return json({ status:'ok',version:'0.12.0',chatModel:settings.provider==='openai'?settings.chatModel:CHAT_MODEL,visionModel:settings.provider==='openai'?settings.visionModel:VISION_MODEL,provider:settings.provider,mode:'personal-beta' });}
+      if (path === '/api/health') {const {settings}=await aiConfiguration(env);return json({ status:'ok',version:'0.13.0',chatModel:settings.provider==='openai'?settings.chatModel:CHAT_MODEL,visionModel:settings.provider==='openai'?settings.visionModel:VISION_MODEL,provider:settings.provider,mode:'personal-beta' });}
       if (path === '/api/config' && request.method === 'GET') return json({ appOrigin:env.APP_ORIGIN||url.origin, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null, authEnvironment: env.CLERK_PUBLISHABLE_KEY?.startsWith('pk_live_') ? 'production' : 'development', pushPublicKey:env.VAPID_PUBLIC_KEY||null, mode: env.CLERK_PUBLISHABLE_KEY ? 'authenticated' : 'preview', features: { notifications: !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY),notificationDiagnostics:true, memory:retrievalReady(env), resources:retrievalReady(env), medications:true, photos: true, transcription: !!env.AI, speech: !!env.AI, voices:VOICES, defaultVoice:DEFAULT_VOICE, caregivers: 'drafts', healthSystems:!!env.HEALTH_TOKEN_KEY, healthConnect: false }, notice: 'Personal care beta. Medication and allergy records are user-entered. Notifications are reminders, not guaranteed clinical alarms. Caregiver invitations remain drafts.' });
       if (!path.startsWith('/api/')) {
         if (!['GET','HEAD'].includes(request.method)) return json({ error: 'Method not allowed.' },405);
@@ -120,7 +121,7 @@ export default {
         await env.DB.prepare('INSERT INTO sessions(token_hash,account_id,expires_at) VALUES (?,?,?)').bind(await hash(token),id,Date.now()+7*86400000).run();
         return json({ state: publicState((await load(env,id)).state) },200,{ 'Set-Cookie': `__Host-sciapp=${token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=604800` });
       }
-      if(path.startsWith('/api/admin/'))return await adminRoute(request,env,ctx,{json,bodyJSON:r=>bodyJSON(r,4200000),form,version:'0.12.0'});
+      if(path.startsWith('/api/admin/'))return await adminRoute(request,env,ctx,{json,bodyJSON:r=>bodyJSON(r,4200000),form,version:'0.13.0'});
       if(path==='/api/health-systems/callback'&&request.method==='GET'){
         if(!env.HEALTH_TOKEN_KEY)throw new AppError('Health connections are not configured.',503);
         const result=await completeConnection(env,request);return new Response(null,{status:303,headers:{...security,Location:env.APP_ORIGIN+'/?health='+(result.cancelled?'cancelled':'connected'),'Set-Cookie':result.cookie}});
@@ -170,6 +171,17 @@ export default {
       if(path==='/api/account/export'&&request.method==='GET')return json({...publicState((await load(env,id)).state),...(env.HEALTH_TOKEN_KEY&&id.startsWith('clerk:')?{healthConnections:await listConnections(env,id),importedHealthRecords:await listRecords(env,id)}:{}),...(retrievalReady(env)&&id.startsWith('clerk:')?{personalMemory:await listMemory(env,id,true)}:{})},200,{'Content-Disposition':'attachment; filename="sciapp-records.json"'});
       const action = path.match(/^\/api\/actions\/([a-f0-9-]+)$/);
       if (action && request.method === 'POST') { const data=await bodyJSON(request); return json(await mutate(env,id,s=>finishProposal(s,action[1],data.decision))); }
+      if(path.startsWith('/api/sharing')){
+        const owner=accountId=>load(env,accountId);
+        if(path==='/api/sharing'&&request.method==='GET')return json(await listSharing(env,id,owner));
+        if(path==='/api/sharing/invites'&&request.method==='POST'){await limit(request,env,'invite-create',20);const invite=await createInvite(env,id);return json({link:`${env.APP_ORIGIN||url.origin}/?invite=${invite.code}`,expiresAt:invite.expiresAt},201);}
+        if(path==='/api/sharing/invites'&&request.method==='DELETE')return json(await cancelInvites(env,id));
+        if(path==='/api/sharing/accept'&&request.method==='POST'){await limit(request,env,'invite-accept',30);const data=await bodyJSON(request);return json(await acceptInvite(env,id,(await load(env,id)).state,data.code,owner));}
+        const access=path.match(/^\/api\/sharing\/access\/(ca-[a-f0-9-]+)(\/today)?$/);
+        if(access&&access[2]&&request.method==='GET')return json(await sharedDayFor(env,id,access[1],owner));
+        if(access&&!access[2]&&request.method==='DELETE')return json(await endSharing(env,id,access[1]));
+        return json({error:'Not found.'},404);
+      }
       if(path==='/api/quick-record'&&request.method==='POST'){const data=await bodyJSON(request);if(!['careLog','vitals'].includes(data.kind)||!data.params||typeof data.params!=='object'||Array.isArray(data.params))throw new AppError('Choose a supported quick record.');const {time,photoId,...params}=data.params;return json(await mutate(env,id,s=>autoSave(s,proposal(s,data.kind,params))));}
       if(path==='/api/ad-help'&&request.method==='POST')return json(await mutate(env,id,()=>adHelp()));
       const savedUndo = path.match(/^\/api\/actions\/([a-f0-9-]+)\/undo$/);
