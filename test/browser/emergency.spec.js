@@ -14,9 +14,11 @@ async function open(page,context,{profile={name:'Test'},allow=true}={}){
  return ()=>locationSent;
 }
 test('AD help shows a call button, the saved address and the current location, read on the device only',async({page,context})=>{
- const sent=await open(page,context,{profile:{name:'Test',address:'12 Synthetic Street, Example City',emergencyNumber:'112'}});
+ const sent=await open(page,context,{profile:{name:'Test',address:'12 Synthetic Street, Example City',emergencyNumber:'5551234567'}});
  const panel=page.getByRole('region',{name:'Emergency call and your location'});await expect(panel).toBeVisible();
- const call=panel.getByRole('link',{name:'Call 112 now'});await expect(call).toHaveAttribute('href','tel:112');expect((await call.boundingBox()).height).toBeGreaterThanOrEqual(64);
+ const call=panel.getByRole('link',{name:'Call 911 now'});await expect(call).toHaveAttribute('href','tel:911');expect((await call.boundingBox()).height).toBeGreaterThanOrEqual(64);
+ const other=panel.getByRole('link',{name:'Call 5551234567 now'});await expect(other).toHaveAttribute('href','tel:5551234567');expect((await other.boundingBox()).height).toBeGreaterThanOrEqual(64);
+ await expect(panel.getByRole('link',{name:/^Call /})).toHaveCount(2);expect((await call.boundingBox()).y).toBeLessThan((await other.boundingBox()).y);
  await expect(panel.getByText('Your home address: 12 Synthetic Street, Example City')).toBeVisible();
  await expect(panel.locator('.emergency-location')).toHaveText('Your location now: latitude 40.71234, longitude -74.00568 (within about 12 metres).');
  await expect(panel.getByRole('link',{name:'Open this location in Maps'})).toHaveAttribute('href','https://www.google.com/maps?q=40.712345,-74.005678');
@@ -27,7 +29,7 @@ test('AD help shows a call button, the saved address and the current location, r
 test('without a saved address or location permission the panel still calls 911 and says what to do',async({page,context})=>{
  await open(page,context,{allow:false});
  const panel=page.getByRole('region',{name:'Emergency call and your location'});
- await expect(panel.getByRole('link',{name:'Call 911 now'})).toHaveAttribute('href','tel:911');
+ await expect(panel.getByRole('link',{name:'Call 911 now'})).toHaveAttribute('href','tel:911');await expect(panel.getByRole('link',{name:/^Call /})).toHaveCount(1);
  await expect(panel.getByText(/No home address saved\. Add it in Settings/)).toBeVisible();
  await expect(panel.locator('.emergency-location')).toHaveText(/Location is turned off for this app|could not be found right now/,{timeout:20000});
  await expect(panel.getByRole('link',{name:'Open this location in Maps'})).toBeHidden();

@@ -32,5 +32,5 @@ test('home address and emergency number are optional, validated and removable',(
  assert.equal(profileSummary(s.profile).find(r=>r.label==='Home address').value,'12 Synthetic Street, Apt 4, Example City');
  for(const bad of [{emergencyNumber:'call mom'},{emergencyNumber:'9'},{emergencyNumber:'911; rm'},{address:'x'.repeat(201)}])assert.throws(()=>normalizeProfile(bad,at),e=>e.status===400);
  updateProfile(s,{address:'',emergencyNumber:''},at);assert.equal(s.profile.address,undefined);assert.equal(s.profile.emergencyNumber,undefined);
- const reply=proposal(s,'settings',{address:'12 Synthetic Street',emergencyNumber:'999'});assert.deepEqual(reply.proposal.details,['Home address: 12 Synthetic Street','Emergency number: 999']);
+ const reply=proposal(s,'settings',{address:'12 Synthetic Street',emergencyNumber:'999'});assert.deepEqual(reply.proposal.details,['Home address: 12 Synthetic Street','Other emergency number (shown with 911): 999']);
 });

@@ -251,23 +251,26 @@ function locationText() {
  return `Your location now: latitude ${lastPosition.latitude.toFixed(5)}, longitude ${lastPosition.longitude.toFixed(5)} (within about ${Math.max(1,Math.round(lastPosition.accuracy))} metres).`;
 }
 function refreshLocationViews() { for (const el of document.querySelectorAll('.emergency-location')) el.textContent = locationText(); for (const link of document.querySelectorAll('.emergency-map')) { link.hidden = !lastPosition?.latitude; if (lastPosition?.latitude) link.href = `https://www.google.com/maps?q=${lastPosition.latitude.toFixed(6)},${lastPosition.longitude.toFixed(6)}`; } }
-function locate() {
+// fresh: the person pressed Update, so a reading remembered by the browser is not accepted.
+function locate(fresh = false) {
  if (locating) return;
  if (!navigator.geolocation) { lastPosition = {failed:'This device cannot share its location with the app. Tell the dispatcher your address.'}; refreshLocationViews(); return; }
  locating = true; refreshLocationViews();
  navigator.geolocation.getCurrentPosition(position => { locating = false; lastPosition = {latitude:position.coords.latitude,longitude:position.coords.longitude,accuracy:position.coords.accuracy,at:Date.now()}; refreshLocationViews(); },
   failure => { locating = false; lastPosition = {failed:failure.code === 1 ? 'Location is turned off for this app. Allow location for this site in your browser settings, or tell the dispatcher your address.' : 'Your location could not be found right now. Tell the dispatcher your address.'}; refreshLocationViews(); },
-  {enableHighAccuracy:true,timeout:15000,maximumAge:60000});
+  {enableHighAccuracy:true,timeout:15000,maximumAge:fresh === true ? 0 : 60000});
 }
 function emergencyPanel(message) {
  const panel = node('section','emergency-panel'); panel.setAttribute('aria-label','Emergency call and your location');
- const number = state.profile?.emergencyNumber || '911';
- const call = node('a','emergency-call',`Call ${number}`); call.href = `tel:${number}`; call.setAttribute('aria-label',`Call ${number} now`);
- panel.append(call,node('p','emergency-say','Say: "autonomic dysreflexia, spinal cord injury", then where you are.'));
+ // 911 is always offered first. A number saved in Settings is offered as well, never instead.
+ const callButton = (number,css) => { const call = node('a',css,`Call ${number}`); call.href = `tel:${number}`; call.setAttribute('aria-label',`Call ${number} now`); return call; };
+ panel.append(callButton('911','emergency-call'));
+ const other = state.profile?.emergencyNumber; if (other && other !== '911') panel.append(callButton(other,'emergency-call other'));
+ panel.append(node('p','emergency-say','Say: "autonomic dysreflexia, spinal cord injury", then where you are.'));
  panel.append(node('p','emergency-address',state.profile?.address ? `Your home address: ${state.profile.address}` : 'No home address saved. Add it in Settings, About you, so it shows here.'));
  const where = node('p','emergency-location',locationText()); where.setAttribute('role','status');
  const map = node('a','emergency-map','Open this location in Maps'); map.target = '_blank'; map.rel = 'noopener noreferrer'; map.hidden = true;
- panel.append(where,map,button('Update my location','secondary',locate));
+ panel.append(where,map,button('Update my location','secondary',() => locate(true)));
  // Read the location by itself when the help was just asked for, and keep a recent reading.
  const recent = Date.now() - Date.parse(message.createdAt) < 10 * 60000, stale = !lastPosition || lastPosition.failed || Date.now() - lastPosition.at > 120000;
  if (recent && stale && !locating && !lastPosition?.failed) queueMicrotask(locate); else queueMicrotask(refreshLocationViews);
@@ -387,10 +390,10 @@ let editingProfile=false;
 function appendAboutYou(parent){
  const p=state.profile||{},section=node('section','profile-section');section.setAttribute('aria-label','About you');section.append(node('h3','','About you'));
  const born=p.dateOfBirth?new Date(p.dateOfBirth+'T00:00:00Z').toLocaleDateString([], {timeZone:'UTC',dateStyle:'long'}):'';
- const rows=[['Preferred name',p.name&&p.name!=='You'?p.name:''],['Full name',p.fullName||''],['Gender',p.gender||''],['Date of birth',born],['Spinal cord injury level',p.injuryLevel||''],['Home address',p.address||''],['Emergency number',p.emergencyNumber||'911 (default)']];
+ const rows=[['Preferred name',p.name&&p.name!=='You'?p.name:''],['Full name',p.fullName||''],['Gender',p.gender||''],['Date of birth',born],['Spinal cord injury level',p.injuryLevel||''],['Home address',p.address||''],['Other emergency number',p.emergencyNumber||'']];
  if(!editingProfile){
   const list=node('dl','profile-details');for(const [label,value] of rows){list.append(node('dt','',label),node('dd',value?'':'muted',value||'Not set'));}
-  const edit=button(rows.slice(0,-1).some(r=>r[1])||p.emergencyNumber?'Edit my details':'Add my details','secondary',()=>{editingProfile=true;renderPanel();document.getElementById('profile-name-input')?.focus();});
+  const edit=button(rows.some(r=>r[1])?'Edit my details':'Add my details','secondary',()=>{editingProfile=true;renderPanel();document.getElementById('profile-name-input')?.focus();});
   section.append(list,edit,node('p','answer-hint','Or tell me in the conversation, for example “my full name is …”.'));parent.append(section);return;
  }
  const form=node('form','profile-form');form.noValidate=true;
@@ -402,7 +405,7 @@ function appendAboutYou(parent){
  const dob=input('profile-dob','Date of birth',p.dateOfBirth,{type:'date',autocomplete:'bday',max:new Date().toISOString().slice(0,10),min:'1900-01-01'});
  const injury=input('profile-injury','Spinal cord injury level (optional, for example C6 incomplete)',p.injuryLevel,{maxLength:80});
  const address=input('profile-address','Home address (shown on the emergency panel so you can tell the medics)',p.address,{autocomplete:'street-address',maxLength:200});
- const emergency=input('profile-emergency','Emergency number to call (leave empty for 911)',p.emergencyNumber,{inputMode:'tel',maxLength:16});
+ const emergency=input('profile-emergency','Another number to call in an emergency (optional; 911 is always shown)',p.emergencyNumber,{inputMode:'tel',maxLength:16});
  const save=node('button','primary','Save my details');save.type='submit';
  const cancel=button('Cancel','secondary',()=>{editingProfile=false;error();renderPanel();});
  const actions=node('div','profile-actions');actions.append(save,cancel);form.append(actions);

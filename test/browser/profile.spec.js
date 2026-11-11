@@ -10,7 +10,7 @@ test('Settings shows About you and saves personal details with large labelled co
  await page.goto('/');await expect(page.locator('#app')).toBeVisible();
  await page.getByRole('button',{name:'Settings',exact:true}).last().click();
  const about=page.getByRole('region',{name:'About you'});
- await expect(about.getByText('Not set')).toHaveCount(6);
+ await expect(about.getByText('Not set')).toHaveCount(7);
  await about.getByRole('button',{name:'Add my details'}).click();
  await expect(page.getByLabel('Preferred name (what I call you)')).toBeFocused();
  await page.getByLabel('Preferred name (what I call you)').fill('Sam');
@@ -22,5 +22,5 @@ test('Settings shows About you and saves personal details with large labelled co
  await about.getByRole('button',{name:'Save my details'}).click();
  await expect.poll(()=>saved).toEqual({name:'Sam',fullName:'Sam Synthetic Example',gender:'Non-binary',dateOfBirth:'1980-02-29',injuryLevel:'',address:'',emergencyNumber:''});
  await expect(about.getByText('Sam Synthetic Example')).toBeVisible();await expect(about.getByText('February 29, 1980')).toBeVisible();
- await expect(about.getByRole('button',{name:'Edit my details'})).toBeVisible();await expect(about.getByText('Not set')).toHaveCount(2);
+ await expect(about.getByRole('button',{name:'Edit my details'})).toBeVisible();await expect(about.getByText('Not set')).toHaveCount(3);
 });
