@@ -24,7 +24,7 @@ test('replies are read with the natural voice, in the chosen voice, and not by t
  const select=page.getByLabel('Voice for spoken replies');await expect(select).toBeVisible();
  expect((await select.boundingBox()).height).toBeGreaterThanOrEqual(44);
  await select.selectOption('orion');
- await expect.poll(()=>requests.at(-1)).toEqual({text:'Hello. This is how I will read replies to you.',voice:'orion'});
+ await expect.poll(()=>requests.at(-1)).toEqual({text:'This is how I will read replies to you.',voice:'orion'});
  expect(await page.evaluate(()=>localStorage.getItem('sciapp-voice'))).toBe('orion');
  await page.getByRole('button',{name:'Mute',exact:true}).click();
  const before=requests.length;await page.getByRole('button',{name:'Conversation'}).click();await ask(page);

@@ -8,13 +8,14 @@ export function spokenText(text){
  t=t.split(/\n+/).map(line=>line.trim()).filter(Boolean).map(line=>/[.!?:;,]$/.test(line)?line:line+'.').join(' ');
  return t.replace(/\s+/g,' ').replace(/([.!?])(?:\s*\.)+/g,'$1').replace(/\s+([.,!?;:])/g,'$1').trim();
 }
-// Short pieces start playing sooner and stay under the voice model's request limit.
-export function speechChunks(text,max=400){
+// The voice model takes about half as long as the audio lasts, so the first piece is a single sentence
+// (speech starts within about a second) and later pieces are fetched while the previous one plays.
+export function speechChunks(text,max=220){
  const clean=spokenText(text),chunks=[];if(!clean)return chunks;
  let current='';
  const push=()=>{if(current.trim())chunks.push(current.trim());current='';};
  for(const sentence of clean.match(/[^.!?]+[.!?]+["')\]]*\s*|[^.!?]+$/g)||[clean]){
-  if((current+sentence).length>max)push();
+  if((current+sentence).length>max||chunks.length===0&&current)push();
   if(sentence.length<=max){current+=sentence;continue;}
   for(const word of sentence.split(/\s+/)){if((current+' '+word).length>max)push();current+=(current?' ':'')+word.slice(0,max);}
   current+=' ';

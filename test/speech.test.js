@@ -12,11 +12,11 @@ test('reply text is turned into words a voice can say',()=>{
 test('long replies are split at sentence ends into pieces the voice model accepts',()=>{
  const text=Array.from({length:30},(_,i)=>`Sentence number ${i+1} is about care.`).join(' ');
  const chunks=speechChunks(text);
- assert.ok(chunks.length>2);assert.ok(chunks.every(c=>c.length<=400&&/[.]$/.test(c)));
+ assert.ok(chunks.length>2);assert.ok(chunks.every(c=>c.length<=220&&/[.]$/.test(c)));assert.equal(chunks[0],'Sentence number 1 is about care.');assert.ok(chunks[1].length>100);
  assert.equal(chunks.join(' '),text);
  assert.deepEqual(speechChunks('Short reply.'),['Short reply.']);assert.deepEqual(speechChunks(''),[]);
- const unbroken=speechChunks('word '.repeat(300));assert.ok(unbroken.length>3&&unbroken.every(c=>c.length<=400));
- assert.ok(speechChunks('x'.repeat(1000)).every(c=>c.length<=400));
+ const unbroken=speechChunks('word '.repeat(300));assert.ok(unbroken.length>3&&unbroken.every(c=>c.length<=220));
+ assert.ok(speechChunks('x'.repeat(1000)).every(c=>c.length<=220));
 });
 test('speech requests are validated and unknown voices fall back to the default',()=>{
  assert.deepEqual(speechRequest({text:' Take **care**. ',voice:'luna'}),{text:'Take care.',voice:'luna'});
