@@ -91,3 +91,11 @@ The conversation renders only the latest ten turns, so it opens on the newest me
 A question is not a request to open the journal. The agent tool `urine_output_total` adds up approved, uncorrected catheterization and bag amounts for a period in the account timezone and replies in words with the total and each amount, for example `860 mL recorded since 7:00 AM today, from 3 entries.` It accepts `relativeDate` (today or yesterday) or local `startDate`/`endDate`, plus `startClock`/`endClock` as 24-hour local clocks; with no dates it covers today, and a start clock includes a record at exactly that minute. Records without an amount and bag photos that were never approved are reported in the reply but never added. It is read-only.
 
 `query_care_journal` accepts the same `startClock`/`endClock` window. Its `show` purpose is for requests to see or show records, photos or the journal. For any other question the agent uses `lookup` and states the result; a looked-up answer no longer attaches journal cards.
+
+## Daily self-care records, routines and insights (0.12.0)
+
+`careLog` records have a `type`: `fluid` (volume in mL, optional drink), `bowel` (outcome complete, partial, none or accident), `skinCheck` (finding clear or concern, optional note and photo) and `pressureRelief`. They are saved at once, appear in the journal under Bowel program, Fluid intake and Skin and pressure relief, and can be undone.
+
+`state.routines` holds reminder times per routine (`bowel`, `skinCheck`, `pressureRelief`), every day or every other day from the day they were set. A routine occurrence is cleared by a saved `careLog` of the same type from 90 minutes before to three hours after its time. The check-in card offers one Done button per due routine.
+
+`careInsights(state)` is included in every state response as `insights`: `today` totals, a 14-day `trend`, `usualUrineMl` (median of earlier days with records, needs five), `outputNote` when yesterday was below 60% or above 150% of usual, `supplies` forecasts and `warnings` for seven days or fewer. Catheter use is the recorded rate over the last 14 days, or the number of scheduled times when there are too few records.

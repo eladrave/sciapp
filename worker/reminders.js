@@ -47,6 +47,25 @@ export function catheterScheduleMatch(state,time,at=Date.now()){
  else{const due=reminderTasks({...state,medications:[]},at).find(t=>t.kind==='catheterization');if(due&&timestamp>=Date.parse(due.dueAt)-CATHETER_BEFORE_MINUTES*minute)task=due;}
  return task?{occurrenceId:task.id,dueAt:task.dueAt,clock:clock(Date.parse(task.dueAt)),timezone}:null;
 }
+// Scheduled routines (bowel program, skin check, pressure relief). A saved record of that type
+// clears the occurrence it follows, with the same window as a catheterization.
+export const ROUTINE_TITLES={bowel:'Bowel program',skinCheck:'Skin check',pressureRelief:'Pressure relief'};
+function routineOccurrences(state,at){
+ const timezone=state.settings.timezone||'UTC',local=localParts(at,timezone),day=Date.UTC(+local.year,+local.month-1,+local.day),all=[];
+ for(const [type,routine] of Object.entries(state.routines||{})){
+  if(!Object.hasOwn(ROUTINE_TITLES,type)||!routine?.times?.length)continue;
+  const candidates=[],start=Date.parse((routine.startDate||'1970-01-01')+'T00:00:00Z');
+  for(let offset=-1;offset<=2;offset++){
+   const dayMs=day+offset*86400000;if(routine.everyDays===2&&Math.round((dayMs-start)/86400000)%2!==0)continue;
+   for(const time of routine.times){const date=new Date(dayMs).toISOString().slice(0,10),due=zonedTime(date,time,timezone);if(!Number.isFinite(due)||due<Date.parse(routine.updatedAt||'1970-01-01'))continue;candidates.push({id:`routine:${type}:${date}:${time}:${routine.updatedAt||''}`,kind:'routine',routineType:type,title:ROUTINE_TITLES[type],dueAt:iso(due)});}
+  }
+  candidates.sort((a,b)=>Date.parse(a.dueAt)-Date.parse(b.dueAt));
+  const completed=new Set(),times=(state.events||[]).filter(e=>e.kind==='careLog'&&!e.voided&&e.data?.type===type).map(e=>Date.parse(e.occurredAt||e.createdAt)).filter(Number.isFinite).sort((a,b)=>a-b);
+  for(const timestamp of times){const match=matchCatheterOccurrence(candidates,timestamp,completed);if(match)completed.add(match.id);}
+  all.push(...candidates.map(t=>({...t,completed:completed.has(t.id)})));
+ }
+ return all;
+}
 export function reminderTasks(state, at=Date.now()) {
  const tasks=[],timezone=state.settings.timezone||'UTC';
  const local=localParts(at,timezone), day=Date.UTC(+local.year,+local.month-1,+local.day);
@@ -66,6 +85,7 @@ export function reminderTasks(state, at=Date.now()) {
   }
   tasks.push(...candidates.filter(t=>!completed.has(t.id)));
  }
+ tasks.push(...routineOccurrences(state,at).filter(t=>!t.completed).map(({completed,...task})=>task));
  if(state.settings.catheterRemindersEnabled&&state.settings.catheterScheduleMode==='daily')tasks.push(...dailyCatheterOccurrences(state,at).filter(t=>!t.completed).map(({completed,...task})=>task));
  if(state.settings.catheterRemindersEnabled&&state.settings.catheterScheduleMode!=='daily'){
   const last=state.events.find(e=>e.kind==='catheterization'&&!e.voided);

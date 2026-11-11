@@ -43,3 +43,10 @@
 /* Earlier turns load a batch at a time from the top of the conversation. */
 .earlier-messages{display:flex;justify-content:center;margin:0 0 18px}.earlier-messages button{min-height:48px;padding:12px 18px;font-size:calc(14px * var(--scale));font-weight:600}.earlier-messages button:focus-visible{outline:3px solid #16655b;outline-offset:3px}
 .voice-choice label{display:block;font-weight:600;margin:8px 0 6px}.voice-choice select{margin-bottom:12px}
+.urgent-help{display:block;width:100%;min-height:56px;margin:0 0 16px;padding:12px 16px;font-weight:700;font-size:calc(17px * var(--scale));color:#fff;background:#9c2b1f;border:2px solid #6f1d14;border-radius:12px;cursor:pointer}.urgent-help:focus-visible{outline:3px solid #174c3d;outline-offset:3px}
+.totals{display:grid;grid-template-columns:minmax(0,auto) minmax(0,1fr);gap:6px 16px;margin:8px 0 12px}.totals dt{font-weight:600}.totals dd{margin:0}
+.quick-records{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0 8px}.quick-records button{min-height:48px}
+.muted-note{color:#4d5f58;font-size:calc(14px * var(--scale));margin:6px 0 0}
+.supply-forecast{margin:6px 0}.supply-forecast.low{font-weight:600;color:#7a3d00;background:#fff4dc;border:1px solid #d9a441;border-radius:8px;padding:8px 10px}
+.trend-chart{display:block;width:100%;max-width:520px;height:auto;margin:8px 0}.trend-chart .bar{fill:#7fa893}.trend-chart .bar.today{fill:#1f6b55}.trend-chart .usual-line{stroke:#5b665f;stroke-width:1.5;stroke-dasharray:5 4}
+.trend-note{margin:10px 0 0;padding:8px 10px;background:#f0f6ef;border:1px solid #9cbba9;border-radius:8px}

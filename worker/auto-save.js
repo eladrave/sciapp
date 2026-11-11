@@ -4,8 +4,8 @@ import {explicitVolume,hasClock} from './catheter-schedule.js';
 // Everyday records the user states, selects or photographs are saved at once and can be undone,
 // so recording care does not need a second tap. The account setting askBeforeSaving restores a
 // review for everything. Changes that are bulk, destructive or about sharing always keep a review.
-export const AUTO_SAVE_KINDS=new Set(['catheterization','bag','vitals','medication','medicationBatch','journalNote','supplies','catheterStock','medStock','settings','catheterSchedule','medicationSchedule','careCorrection']);
-const UNDOABLE=new Set(['catheterization','supplies','medication','vitals','bag','journalNote','medicationStatus']);
+export const AUTO_SAVE_KINDS=new Set(['catheterization','bag','vitals','medication','medicationBatch','journalNote','supplies','catheterStock','medStock','settings','catheterSchedule','medicationSchedule','careCorrection','careLog','routineSchedule']);
+const UNDOABLE=new Set(['catheterization','supplies','medication','vitals','bag','journalNote','medicationStatus','careLog']);
 export const autoSaveEnabled=state=>state.settings?.askBeforeSaving!==true;
 const replace=(state,next)=>{for(const key of Object.keys(state))delete state[key];Object.assign(state,next);};
 export function autoSave(state,reply){

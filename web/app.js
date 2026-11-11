@@ -28,7 +28,7 @@ const icons = {
 function node(tag, className, text) { const el = document.createElement(tag); if (className) el.className = className; if (text !== undefined) el.textContent = text; return el; }
 function button(text, className, handler) { const el = node('button', className, text); el.type = 'button'; el.addEventListener('click', handler); return el; }
 async function readPhoto(photoId){const generation=accountGeneration;const headers=new Headers();const token=await window.Clerk?.session?.getToken();if(token)headers.set('Authorization',`Bearer ${token}`);const r=await fetch(`/api/photos/${encodeURIComponent(photoId)}`,{headers,credentials:'same-origin'});if(generation!==accountGeneration)throw staleError();if(!r.ok)throw new Error('Original photo unavailable.');const blob=await r.blob();if(generation!==accountGeneration)throw staleError();return blob;}
-const journalUI=createJournalUI({api,node,button,readPhoto,send,error,formatTime});
+const journalUI=createJournalUI({api,node,button,readPhoto,send,error,formatTime,profile:()=>state?.profile||null});
 const medicationCheckInUI=createMedicationCheckInUI({dismiss:dismissReminder,node,button,run:runMedicationCheckIn,send,isBusy:()=>busy||uploadBusy||recording});
 const onboardingUI=createOnboardingUI({node,button,show:showAppHelp,complete:finishOnboarding,draft:text=>{ui.message.value=text;switchPage('Conversation');focusComposer(true);ui.announcer.textContent='Example added. Edit it to fit you, then Send.';},isBusy:()=>busy||uploadBusy||recording});
 ui.help.addEventListener('click',()=>showAppHelp());
@@ -240,6 +240,47 @@ function switchPage(page, {latest = false} = {}) {
  if (page === 'Conversation') { if (latest) chatScroll.latest(); else if (previous !== page) chatScroll.restore(); }
  else if (previous !== page) $('#main').scrollTop = 0;
 }
+// One-tap records for things done many times a day. Each is saved at once and can be undone.
+async function quickRecord(kind, params) {
+ if (busy) return; const generation = accountGeneration; setBusy(true); error(); stopHandsFree();
+ try { receive(await api('/api/quick-record',{method:'POST',body:JSON.stringify({kind,params})})); }
+ catch(e) { if(e.name !== 'AbortError') error(e.message); }
+ finally { if(generation === accountGeneration) { setBusy(false); resumeHandsFree(); } }
+}
+async function showAdHelp() {
+ if (busy) return; const generation = accountGeneration; setBusy(true); error(); stopHandsFree(); switchPage('Conversation',{latest:true});
+ try { receive(await api('/api/ad-help',{method:'POST',body:'{}'})); }
+ catch(e) { if(e.name !== 'AbortError') error(e.message); }
+ finally { if(generation === accountGeneration) { setBusy(false); resumeHandsFree(); } }
+}
+function appendUrgentHelp(parent) { const help = button('Autonomic dysreflexia help','urgent-help',showAdHelp); help.setAttribute('aria-label','Autonomic dysreflexia help: hear the first steps now'); parent.append(help); }
+function appendTodayTotals(parent) {
+ const insights = state.insights; if (!insights) return;
+ const card = node('section','data-card today-totals'); card.setAttribute('aria-label','Today so far');
+ card.append(node('h2','','Today so far'));
+ const totals = node('dl','totals');
+ for (const [label,value,records] of [['Drank',insights.today.fluidMl,insights.today.fluidRecords],['Urine recorded',insights.today.urineMl,insights.today.urineRecords]]) { totals.append(node('dt','',label),node('dd','',records ? `${value} mL` : 'Nothing recorded')); }
+ card.append(totals);
+ for (const warning of insights.warnings || []) card.append(node('p','supply-forecast low',`Running low. ${warning}`));
+ const actions = node('div','quick-records');
+ for (const [label,kind,params] of [['Drank a glass (250 mL)','careLog',{type:'fluid',volume:250}],['Pressure relief done','careLog',{type:'pressureRelief'}],['Skin check: all clear','careLog',{type:'skinCheck',finding:'clear'}],['Bowel program done','careLog',{type:'bowel',outcome:'complete'}]]) { actions.append(button(label,'secondary',() => quickRecord(kind,params))); }
+ card.append(actions,node('p','muted-note','Or just say it, for example "I drank 500 mL of water" or "bowel program done, small result".'));
+ parent.append(card);
+}
+// Two weeks of recorded urine as bars, with the same numbers available to screen readers as a list.
+function appendTrend(parent) {
+ const insights = state.insights, days = insights?.trend || []; if (!days.some(day => day.urineRecords)) return;
+ const card = node('section','data-card trend-card'); card.append(node('h2','','Urine recorded, last 14 days'));
+ const max = Math.max(...days.map(day => day.urineMl),insights.usualUrineMl || 0,1), width = 14 * 22, height = 120;
+ const svgNode = name => document.createElementNS('http://www.w3.org/2000/svg',name);
+ const svg = svgNode('svg'); svg.setAttribute('viewBox',`0 0 ${width} ${height + 4}`); svg.setAttribute('role','img'); svg.setAttribute('class','trend-chart');
+ svg.setAttribute('aria-label',`Bar chart of recorded urine per day. Today ${insights.today.urineMl} mL${insights.usualUrineMl ? `, your usual is about ${insights.usualUrineMl} mL` : ''}.`);
+ days.forEach((day,index) => { const bar = svgNode('rect'), size = Math.round(day.urineMl / max * height); bar.setAttribute('x',index * 22 + 3); bar.setAttribute('width',16); bar.setAttribute('y',height - size); bar.setAttribute('height',Math.max(size,day.urineRecords ? 2 : 0)); bar.setAttribute('rx',3); bar.setAttribute('class',index === days.length - 1 ? 'bar today' : 'bar'); const title = svgNode('title'); title.textContent = `${day.label}: ${day.urineRecords ? day.urineMl + ' mL' : 'nothing recorded'}`; bar.append(title); svg.append(bar); });
+ if (insights.usualUrineMl) { const line = svgNode('line'), y = height - Math.round(insights.usualUrineMl / max * height); line.setAttribute('x1',0); line.setAttribute('x2',width); line.setAttribute('y1',y); line.setAttribute('y2',y); line.setAttribute('class','usual-line'); svg.append(line); }
+ card.append(svg,node('p','muted-note',`${days[0].label} to today${insights.usualUrineMl ? `. The dashed line is your usual day, about ${insights.usualUrineMl} mL` : ''}. Days with no bar have no records.`));
+ if (insights.outputNote) card.append(node('p','trend-note',insights.outputNote));
+ parent.append(card);
+}
 function panelHeader(title, description) { const wrap = document.createDocumentFragment(); wrap.append(node('span','eyebrow','YOUR DAILY SPACE'),node('h1','',title),node('p','panel-intro',description)); return wrap; }
 function chatButton(text, prompt = text) { return button(text,'secondary',() => send(prompt)); }
 function careMedications() { return (state.medications || []).filter(med => med.active !== false); }
@@ -309,6 +350,9 @@ function appendProfile(panel) {
  catheter.append(node('p','profile-schedule',daily?'Every day: '+state.settings.catheterTimes.map(dailyClock).join(' · '):state.settings.catheterStartAt||state.settings.catheterRemindersEnabled?'Every '+state.settings.catheterIntervalHours+' hours (interval schedule)':'Schedule not set.'));
  catheter.append(node('p','',state.settings.catheterRemindersEnabled?'Catheter reminders on. Device notification permission is separate.':'Catheter reminders off.'));
  catheter.append(chatButton('Change catheter schedule','Set catheter reminders'));profile.append(catheter);
+ const routines=node('section','profile-section');routines.append(node('h3','','Other care routines'));
+ for(const [type,title,prompt] of [['bowel','Bowel program','Set my bowel program reminder times'],['skinCheck','Skin check','Set a daily skin check reminder'],['pressureRelief','Pressure relief','Set pressure relief reminder times']]){const routine=state.routines?.[type];routines.append(node('p','profile-schedule',`${title}: ${routine?.times?.length?(routine.everyDays===2?'Every other day: ':'Every day: ')+routine.times.map(dailyClock).join(' · '):'No reminders set.'}`),chatButton(routine?.times?.length?`Change ${title.toLowerCase()} reminders`:`Set ${title.toLowerCase()} reminders`,prompt));}
+ profile.append(routines);
  const medications=node('section','profile-section');medications.append(node('h3','','Medications and schedules'));
  if(!careMedications().length)medications.append(node('p','','No medications saved.'));
  for(const med of careMedications()){
@@ -350,16 +394,17 @@ function renderPanel() {
   for (const med of careMedications()) {
    const card = node('article','data-card'); card.append(node('h2','',med.name),node('p','',stockText(med.stock,med.unit)),chatButton('Set stock',`Set stock for ${med.name}`),chatButton('Units per dose',`Set units per dose for ${med.name}`)); grid.append(card);
   }
+  for (const supply of state.insights?.supplies || []) { const line = node('p',supply.low ? 'supply-forecast low' : 'supply-forecast',`${supply.name}: about ${supply.daysLeft} day${supply.daysLeft===1?'':'s'} left at ${supply.perDay} per day.`); panel.append(line); }
   panel.append(grid,chatButton('Add a delivery','Add supplies'));
   if (!state.inventory?.length) panel.append(node('p','empty-state','No supplies added yet. Tell me what you have, or send a photo of a box.'));
  }
  if(activePage==='History')journalUI.render(panel);
  if (activePage === 'Today') {
   panel.append(panelHeader('Your day, at a glance.','Due care, your medication list, and confirmed activities.'));
-  appendCareCheckIn(panel);appendReminders(panel);appendMedicationCards(panel);
+  appendUrgentHelp(panel);appendCareCheckIn(panel);appendTodayTotals(panel);appendReminders(panel);appendMedicationCards(panel);appendTrend(panel);
   const dateKey = date => new Intl.DateTimeFormat('en-CA',{timeZone:state.settings?.timezone || undefined,year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
   const events=(state.events||[]).filter(e=>dateKey(new Date(e.occurredAt||e.createdAt))===dateKey(new Date()));
-  for(const event of events){const card=node('article','data-card event-row');card.append(node('h2','',event.title),node('p','',event.detail),node('p','',`Observed: ${formatTime(event.occurredAt||event.createdAt)}${event.voided?' · Corrected':''}`));if(!event.voided&&['catheterization','bag','vitals','medication','supplies','journalNote'].includes(event.kind))card.append(button('Undo','secondary',()=>undo(event.id)));panel.append(card);}
+  for(const event of events){const card=node('article','data-card event-row');card.append(node('h2','',event.title),node('p','',event.detail),node('p','',`Observed: ${formatTime(event.occurredAt||event.createdAt)}${event.voided?' · Corrected':''}`));if(!event.voided&&['catheterization','bag','vitals','medication','supplies','journalNote','careLog'].includes(event.kind))card.append(button('Undo','secondary',()=>undo(event.id)));panel.append(card);}
   if(!events.length)panel.append(node('p','','Nothing logged today.'));
  }
  if (activePage === 'Settings') {
@@ -565,7 +610,8 @@ function appendCareCheckIn(parent){
  const due=visibility.due;
  if(due.length&&!state.messages.at(-1)?.medicationCheckIn)card.append(node('p','','These scheduled items have no confirmed record. Did you complete any of them?'));
  for(const group of state.messages.at(-1)?.medicationCheckIn||state.messages.some(m=>m.proposal?.kind==='medicationBatch'&&m.proposal.status==='pending'&&Date.parse(m.proposal.expiresAt)>Date.now())?[]:agenda.medicationGroups||[]){if(group.medications.some(m=>due.some(t=>t.id===m.occurrenceId)))medicationCheckInUI.group(card,group);}
- for(const task of due.filter(t=>t.kind!=='medication')){const row=node('div','care-due');row.append(node('p','',`${task.title} · ${formatTime(task.dueAt)}`),chatButton('Record this catheterization',`Help me record catheterization scheduled for ${task.dueAt}. Ask whether I did it and the volume.`),button('Dismiss','secondary',()=>dismissReminder([task.id])));card.append(row);}
+ for(const task of due.filter(t=>t.kind==='routine')){const row=node('div','care-due');row.append(node('p','',`${task.title} · ${formatTime(task.dueAt)}`),button(`${task.title} done`,'primary',()=>quickRecord('careLog',{type:task.routineType})),button('Dismiss','secondary',()=>dismissReminder([task.id])));card.append(row);}
+ for(const task of due.filter(t=>t.kind==='catheterization')){const row=node('div','care-due');row.append(node('p','',`${task.title} · ${formatTime(task.dueAt)}`),chatButton('Record this catheterization',`Help me record catheterization scheduled for ${task.dueAt}. Ask whether I did it and the volume.`),button('Dismiss','secondary',()=>dismissReminder([task.id])));card.append(row);}
  if(due.some(t=>t.kind==='catheterization'))card.append(node('p','answer-hint','Or send a photo of the bag. I read the amount and match it to the scheduled time, so you only approve.'));
  if(agenda.unscheduledMedications.length)card.append(node('p','',`No reminder times: ${agenda.unscheduledMedications.map(m=>m.name).join(', ')}. Tell me the times to add them.`));
  if(visibility.showNotificationSetup)card.append(node('p','','This browser is not connected for notifications. Chat check-ins still work.'),button('Enable notifications on this device','primary',()=>notificationAction('enable')));

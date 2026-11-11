@@ -1,0 +1,72 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {initialState,proposal,finishProposal,undoEvent} from '../worker/domain.js';
+import {autoSave,undoSaved} from '../worker/auto-save.js';
+import {careInsights} from '../worker/insights.js';
+import {journalQuery} from '../worker/journal.js';
+import {adHelp,AD_STEPS} from '../worker/ad-help.js';
+import {agentCareTools,structuredCareTool,careContext} from '../worker/care-agent.js';
+
+const at=Date.parse('2026-11-10T21:00:00Z'),DAY=86400000;// 4:00 PM in New York
+const fresh=()=>{const s=initialState({real:true});s.settings.timezone='America/New_York';return s;};
+const add=(s,kind,data,time)=>s.events.unshift({id:crypto.randomUUID(),kind,title:kind,detail:'',createdAt:time,occurredAt:time,data});
+test('drinks, bowel program, skin checks and pressure relief are validated, saved at once and undoable',t=>{
+ t.mock.timers.enable({apis:['Date'],now:at});const s=fresh();
+ const drink=autoSave(s,proposal(s,'careLog',{type:'fluid',volume:500.4,drink:'water'}));s.messages.push(drink);
+ assert.equal(drink.proposal.title,'Fluid intake');assert.equal(drink.proposal.autoSaved,true);assert.equal(drink.proposal.undoable,true);assert.equal(drink.proposal.details[0],'500 mL of water');
+ assert.deepEqual(s.events[0].data,{type:'fluid',time:new Date(at).toISOString(),volume:500,drink:'water'});
+ assert.deepEqual(proposal(s,'careLog',{type:'bowel'}).proposal.details.slice(0,1),['Completed with a result']);
+ const skin=proposal(s,'careLog',{type:'skinCheck',finding:'concern',note:'Red mark on left heel'});assert.match(skin.proposal.details.join(' '),/not a diagnosis.*Red mark on left heel/);
+ assert.equal(proposal(s,'careLog',{type:'pressureRelief'}).proposal.title,'Pressure relief');
+ for(const bad of [{type:'sleep'},{type:'fluid'},{type:'fluid',volume:0},{type:'fluid',volume:6000},{type:'bowel',outcome:'great'},{type:'skinCheck',finding:'bad'},{type:'skinCheck',photoId:'not-mine'},{type:'bowel',note:'x'.repeat(301)},{type:'fluid',volume:200,time:new Date(at+3600000).toISOString()}])assert.throws(()=>proposal(s,'careLog',bad),e=>e.status===400,JSON.stringify(bad));
+ assert.equal(careInsights(s,at).today.fluidMl,500);
+ undoSaved(s,drink.proposal.id);assert.equal(careInsights(s,at).today.fluidMl,0);
+ const review=proposal(s,'careLog',{type:'bowel',outcome:'partial'});finishProposal(s,review.proposal.id,'approve');
+ assert.equal(journalQuery(s,{category:'bowel',limit:10},at).entries.length,1);assert.equal(journalQuery(s,{category:'fluid',includeVoided:true,limit:10},at).entries.length,1);
+ undoEvent(s,s.events.find(e=>e.kind==='careLog'&&e.data.type==='bowel').id);assert.equal(journalQuery(s,{category:'bowel',limit:10},at).entries.length,0);
+});
+test('insights total today, compare yesterday with the usual day, and forecast supplies',()=>{
+ const s=fresh();
+ for(let d=2;d<=8;d++)for(const hour of [12,17,22])add(s,'catheterization',{volume:400},new Date(at-d*DAY+(hour-21)*3600000).toISOString());
+ add(s,'catheterization',{volume:300},new Date(at-DAY).toISOString());
+ add(s,'catheterization',{volume:350},new Date(at-3600000).toISOString());add(s,'bag',{volume:100},new Date(at-1800000).toISOString());
+ add(s,'careLog',{type:'fluid',volume:250},new Date(at-7200000).toISOString());add(s,'careLog',{type:'fluid',volume:500},new Date(at-600000).toISOString());
+ s.events[0].voided=true;
+ const i=careInsights(s,at);
+ assert.deepEqual(i.today,{date:'2026-11-10',urineMl:450,urineRecords:2,fluidMl:250,fluidRecords:1});
+ assert.equal(i.trend.length,14);assert.equal(i.trend.at(-1).label,'Nov 10');assert.equal(i.usualUrineMl,1200);
+ assert.match(i.outputNote,/^Yesterday's recorded urine \(300 mL\) was lower than your usual of about 1200 mL\. A missed record can cause this\./);
+ assert.deepEqual(i.supplies,[]);assert.deepEqual(i.warnings,[]);
+ s.inventory.find(x=>x.id==='catheter').count=12;
+ s.medications.push({id:'m1',name:'Sample Alpha',dosage:'2 mg',times:['08:00','20:00'],stock:9,unit:'tablets',unitsPerDose:1,unitsConfigured:true,active:true},{id:'m2',name:'Sample Beta',dosage:'5 mg',times:['08:00'],stock:90,unit:'tablets',unitsPerDose:1,unitsConfigured:true,active:true},{id:'m3',name:'No stock',dosage:'1',times:['08:00'],stock:null,active:true});
+ const j=careInsights(s,at);
+ assert.deepEqual(j.supplies.map(x=>[x.id,x.daysLeft,x.low]),[['catheter',4,true],['m1',4,true],['m2',90,false]]);
+ assert.equal(j.warnings.length,2);assert.match(j.warnings[1],/^Sample Alpha: about 4 days left \(9 tablets\)\.$/);
+ const few=fresh();add(few,'catheterization',{volume:300},new Date(at-DAY).toISOString());assert.equal(careInsights(few,at).usualUrineMl,null);assert.equal(careInsights(few,at).outputNote,null);
+ const context=careContext(s,{});assert.ok(context.insights.today);assert.equal(context.insights.trend,undefined);
+});
+test('autonomic dysreflexia help gives the steps in order and is one tool call away',async()=>{
+ const reply=adHelp();
+ assert.equal(reply.adHelp,true);assert.match(reply.content,/^Autonomic dysreflexia can be an emergency\./);
+ AD_STEPS.forEach((step,i)=>assert.ok(reply.content.includes(`${i+1}. ${step}`)));
+ assert.ok(reply.content.indexOf('Sit up')<reply.content.indexOf('bladder')&&reply.content.indexOf('bladder')<reply.content.indexOf('bowel'));
+ assert.match(reply.content,/Call emergency services now.*autonomic dysreflexia/);assert.deepEqual(reply.options,['Log blood pressure','I feel better now']);
+ const s=fresh();const r=await structuredCareTool(s,'I have a pounding headache and I am sweating',{name:'autonomic_dysreflexia_help',arguments:{}},{});
+ assert.equal(r.reply.adHelp,true);assert.equal(s.events.length,0);
+ assert.ok(agentCareTools.some(t=>t.name==='autonomic_dysreflexia_help'));
+});
+import {reminderTasks,careAgenda} from '../worker/reminders.js';
+test('routine reminders repeat daily or every other day and a saved record clears only its occurrence',t=>{
+ t.mock.timers.enable({apis:['Date'],now:at});const s=fresh();
+ const set=autoSave(s,proposal(s,'routineSchedule',{type:'bowel',times:['20:00','20:00'],everyDays:2}));
+ assert.equal(set.proposal.autoSaved,true);assert.equal(set.proposal.title,'Set bowel program reminders');assert.match(set.proposal.details[0],/^Every other day, starting today, at 20:00 \(America\/New_York\)$/);
+ assert.deepEqual({...s.routines.bowel,updatedAt:null},{times:['20:00'],everyDays:2,startDate:'2026-11-10',updatedAt:null});assert.equal(s.settings.notificationsEnabled,true);
+ autoSave(s,proposal(s,'routineSchedule',{type:'skinCheck',times:['21:00']}));
+ const due=reminderTasks(s,at).filter(x=>x.kind==='routine');
+ assert.deepEqual(due.map(x=>[x.routineType,x.dueAt]),[['bowel','2026-11-11T01:00:00.000Z'],['skinCheck','2026-11-11T02:00:00.000Z'],['skinCheck','2026-11-12T02:00:00.000Z']]);
+ const later=Date.parse('2026-11-11T01:30:00Z');assert.deepEqual(careAgenda(s,later).overdue.map(x=>x.title),['Bowel program']);
+ t.mock.timers.setTime(later);autoSave(s,proposal(s,'careLog',{type:'bowel'}));
+ assert.deepEqual(careAgenda(s,later).overdue,[]);assert.equal(reminderTasks(s,later).filter(x=>x.routineType==='bowel').length,1);assert.equal(reminderTasks(s,later).filter(x=>x.routineType==='skinCheck').length,2);
+ autoSave(s,proposal(s,'routineSchedule',{type:'bowel',times:[]}));assert.equal(s.routines.bowel,undefined);assert.equal(reminderTasks(s,later).some(x=>x.routineType==='bowel'),false);
+ for(const bad of [{type:'sleep',times:['08:00']},{type:'bowel',times:['8am']},{type:'bowel',times:['08:00'],everyDays:3},{type:'bowel'}])assert.throws(()=>proposal(s,'routineSchedule',bad),e=>e.status===400);
+});

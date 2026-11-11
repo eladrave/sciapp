@@ -15,3 +15,10 @@ test('doctor PDF preserves original image pixels, gives each unique photo a full
 test('long notes paginate and unavailable originals are labeled without inventing images',async()=>{
  const e=entry('long','missing');e.detail='Synthetic clinical note with enough detail for a doctor. '.repeat(300);const bytes=await createDoctorReportPDF([e],{timezone:'America/New_York',readPhoto:async()=>{throw Error('deleted');},fontBytes:await readFile('assets/report-font.woff')});const doc=await PDFDocument.load(bytes);assert.ok(doc.getPageCount()>3);assert.equal(doc.getPages().at(-1).getWidth(),612);
 });
+test('doctor PDF carries the personal details the user chose to enter',async()=>{
+ const fontBytes=await readFile('assets/report-font.woff'),options={timezone:'America/New_York',readPhoto:async()=>{throw Error('none');},fontBytes,generatedAt:'2026-11-09T15:00:00Z'};
+ const plain=await createDoctorReportPDF([{...entry('a',null),photoAvailable:false}],options);
+ const named=await createDoctorReportPDF([{...entry('a',null),photoAvailable:false}],{...options,profile:{name:'Sam',fullName:'Sam Synthetic Example',dateOfBirth:'1980-02-29',gender:'Non-binary',injuryLevel:'C6 incomplete'}});
+ assert.ok(named.length>plain.length+40);assert.equal((await PDFDocument.load(named)).getPageCount(),(await PDFDocument.load(plain)).getPageCount());
+ assert.equal((await createDoctorReportPDF([{...entry('a',null),photoAvailable:false}],{...options,profile:{name:'You'}})).length,plain.length);
+});

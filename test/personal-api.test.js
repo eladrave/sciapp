@@ -51,5 +51,11 @@ test('personal API persists reviewed medicines separately, logs doses once and c
   const undone=await(await req(`/api/actions/${saved.reply.proposal.id}/undo`,'POST',{})).json();
   assert.equal(undone.state.inventory[0].count,99);assert.equal(undone.state.messages.find(m=>m.proposal?.id===saved.reply.proposal.id).proposal.undone,true);
   assert.equal((await req(`/api/actions/${saved.reply.proposal.id}/undo`,'POST',{},'b')).status,404);
+  // One-tap records and the spoken AD steps do not need the AI model.
+  const drink=await(await req('/api/quick-record','POST',{kind:'careLog',params:{type:'fluid',volume:250,time:'2020-01-01T00:00:00Z'}})).json();
+  assert.equal(drink.reply.proposal.autoSaved,true);assert.equal(drink.state.insights.today.fluidMl,250);assert.ok(Date.parse(drink.state.events[0].occurredAt)>Date.now()-60000);
+  assert.equal((await req('/api/quick-record','POST',{kind:'carePlan',params:{}})).status,400);assert.equal((await req('/api/quick-record','POST',{kind:'careLog',params:{type:'fluid'}})).status,400);
+  const bp=await(await req('/api/quick-record','POST',{kind:'vitals',params:{systolic:160,diastolic:95}})).json();assert.equal(bp.reply.proposal.autoSaved,true);
+  const ad=await(await req('/api/ad-help','POST',{})).json();assert.equal(ad.reply.adHelp,true);assert.match(ad.state.messages.at(-1).content,/1\. Sit up straight/);
  }finally{await mf.dispose();}
 });
