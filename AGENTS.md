@@ -1,5 +1,7 @@
 # SCIapp implementation requirements
 
+SCIapp is a companion for a person with a disability. The assistant helps with any question or task, using the published resources, the user's journal and what it remembers about them, and adds pictures or other media from the resources when it has them. Resources come first; when they are silent it still answers from general knowledge and says so. It never diagnoses or changes prescribed treatment, and health answers end with a short reminder to check with the doctor or care team. What users say about their preferences is remembered and used later.
+
 This product is for people who may have limited use of their hands. Minimize required taps, typing and repeated questions in every feature.
 
 - Group related care actions, especially medications sharing a scheduled time. Offer short contextual choices such as Took them all, Took only some and Not yet.

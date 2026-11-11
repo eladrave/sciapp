@@ -35,7 +35,8 @@ export function careInsights(state,at=Date.now(),days=14){
   const perDay=med.unitsPerDose*med.times.length;
   supplies.push({id:med.id,name:med.name,count:med.stock,unit:med.unit,perDay,daysLeft:Math.floor(med.stock/perDay)});
  }
- for(const s of supplies)s.low=s.daysLeft<=7;
+ // The local date the stock runs out at the current rate, for refill and reorder questions.
+ for(const s of supplies){s.low=s.daysLeft<=7;s.runOutDate=dayKey(at+s.daysLeft*DAY,zone);}
  const warnings=supplies.filter(s=>s.low).map(s=>s.daysLeft<1?`${s.name}: less than a day left (${s.count} ${s.unit}).`:`${s.name}: about ${s.daysLeft} day${s.daysLeft===1?'':'s'} left (${s.count} ${s.unit}).`);
  return {today:{date:today.date,urineMl:today.urineMl,urineRecords:today.urineRecords,fluidMl:today.fluidMl,fluidRecords:today.fluidRecords},trend,usualUrineMl,outputNote,supplies,warnings};
 }

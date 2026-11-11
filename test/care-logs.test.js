@@ -41,6 +41,7 @@ test('insights total today, compare yesterday with the usual day, and forecast s
  s.medications.push({id:'m1',name:'Sample Alpha',dosage:'2 mg',times:['08:00','20:00'],stock:9,unit:'tablets',unitsPerDose:1,unitsConfigured:true,active:true},{id:'m2',name:'Sample Beta',dosage:'5 mg',times:['08:00'],stock:90,unit:'tablets',unitsPerDose:1,unitsConfigured:true,active:true},{id:'m3',name:'No stock',dosage:'1',times:['08:00'],stock:null,active:true});
  const j=careInsights(s,at);
  assert.deepEqual(j.supplies.map(x=>[x.id,x.daysLeft,x.low]),[['catheter',4,true],['m1',4,true],['m2',90,false]]);
+ assert.deepEqual(j.supplies.map(x=>x.runOutDate),['2026-11-14','2026-11-14','2027-02-08']);
  assert.equal(j.warnings.length,2);assert.match(j.warnings[1],/^Sample Alpha: about 4 days left \(9 tablets\)\.$/);
  const few=fresh();add(few,'catheterization',{volume:300},new Date(at-DAY).toISOString());assert.equal(careInsights(few,at).usualUrineMl,null);assert.equal(careInsights(few,at).outputNote,null);
  const context=careContext(s,{});assert.ok(context.insights.today);assert.equal(context.insights.trend,undefined);

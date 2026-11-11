@@ -31,7 +31,7 @@ test('search_resources adds passages to the turn so the answer can cite them and
  const own=await runCareAgent({},'synthetic',s,'Show me my catheter records from today',{sources:[{title:'Yes You Can',url:'/u',text:'x'}]},async(_e,_s,_t,c)=>c.toolTrace.length?{kind:'reply',content:'Your journal has no catheter records for today.',sources:[{title:'Yes You Can',url:'/u'}]}:{kind:'tool',tool:tool('query_care_journal',{purpose:'show',category:'catheter',relativeDate:'today'})});
  assert.deepEqual(own.sources,[]);
  assert.ok(agentCareTools.some(t=>t.name==='search_resources'));
- const prompt=agentPrompt(s,{sources:[],memories:[]});assert.match(prompt,/never from the journal/);assert.match(prompt,/search_resources/);
+ const prompt=agentPrompt(s,{sources:[],memories:[]});for(const rule of [/Be genuinely helpful with any question or task/,/general information and not from their saved resources/,/check with their doctor or care team/,/tell them you will remember it/,/runOutDate/,/Do not diagnose/])assert.match(prompt,rule);assert.match(prompt,/never from the journal/);assert.match(prompt,/search_resources/);
 });
 test('matched chunks are widened with their neighbours and touching matches are merged',async()=>{
  const chunks=new Map(Array.from({length:12},(_,i)=>[`r-book-${i}`,`part${i}`]));
