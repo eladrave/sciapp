@@ -6,6 +6,7 @@ import { questionChoices } from './question-choices.js';
 import { createHealthUI } from './health-systems.js';
 import { createChatScroll } from './chat-scroll.js';
 import { speechChunks } from './speech-text.js';
+import { renderRichText, plainText } from './rich-text.js';
 import { confirmationDelay } from './conversation-controls.js';
 import { notificationStatus, reportNotificationDiagnostic, watchNotificationPermission, pendingNotificationEnable, permissionGuidance, enableNotifications, disableNotifications, detachBrowserNotifications, testNotification } from './notifications.js';
 const $ = (selector) => document.querySelector(selector);
@@ -123,7 +124,7 @@ function renderMessages(position) {
   const row = node('article', `message ${message.role === 'user' ? 'user' : 'assistant'}`); row.dataset.messageId = message.id;
   if (message.role !== 'user') { const mark = node('span','assistant-mark','✳'); mark.setAttribute('aria-hidden','true'); row.append(mark); }
   const body = node('div','message-body'); body.append(node('div','message-meta',message.role === 'user' ? 'YOU' : 'SCIAPP COMPANION'));
-  body.append(node('p','message-text',message.content || ''));
+  if (message.role === 'user') body.append(node('p','message-text',message.content || '')); else { const text = node('div','message-text rich-text'); text.append(renderRichText(document,message.content || '')); body.append(text); }
   if (message.photoId && state.photos?.some(photo => photo.id === message.photoId)) { const img = node('img','photo-message'); img.alt = 'Photo attached to this message'; body.append(img); photoLoads.push(() => loadHistoricalPhoto(img,message.photoId,generation)); body.append(button('Delete photo','secondary',() => deleteSavedPhoto(message.photoId))); }
   if (message.proposal) body.append(proposalCard(message.proposal));
   healthUI.render(body,message);
@@ -164,7 +165,7 @@ async function undoSaved(id) {
 }
 function changesSound(proposal) { return proposal?.kind === 'settings' && proposal.changedSettings?.includes('muted'); }
 function replyText(reply) { if (!reply) return ''; return [reply.content, reply.proposal?.title, ...(reply.proposal?.details || []), reply.proposal?.status === 'pending' ? 'Choose Approve or Cancel, or type or say a correction.' : '',reply.medicationCheckIn?.stage==='selection'?reply.medicationCheckIn.medications.map(m=>`${m.number}. ${m.title}`).join('. '):'',reply.answerHint||''].filter(Boolean).join('. '); }
-function receive(result, soundApproval = false) { visibleMessages = MESSAGE_PAGE; if(activePage === 'Conversation') chatScroll.latest(); update(result.state); if (soundApproval && typeof state.settings?.muted === 'boolean') setMute(state.settings.muted); const text = replyText(result.reply); ui.announcer.textContent = text; speak(text); }
+function receive(result, soundApproval = false) { visibleMessages = MESSAGE_PAGE; if(activePage === 'Conversation') chatScroll.latest(); update(result.state); if (soundApproval && typeof state.settings?.muted === 'boolean') setMute(state.settings.muted); const text = replyText(result.reply); ui.announcer.textContent = plainText(text); speak(text); }
 async function act(id, decision) {
  if (busy) return; const generation = accountGeneration; const settingsApproval = decision === 'approve' && state.messages?.some(message => message.proposal?.id === id && changesSound(message.proposal)); setBusy(true); error(); stopHandsFree(); chatScroll.latest();
  try { const result = await api(`/api/actions/${encodeURIComponent(id)}`,{method:'POST',body:JSON.stringify({decision})}); receive(result,settingsApproval); }

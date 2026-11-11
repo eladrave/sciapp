@@ -11,6 +11,6 @@ test('Today has one-tap records, running totals and the AD help steps',async({pa
  await page.locator('.event-row').filter({hasText:'Bowel program'}).getByRole('button',{name:'Undo'}).click();await expect(page.locator('.event-row:has(h2:text-is("Bowel program"))')).toContainText('Corrected');
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth)).toBe(true);
  const help=page.getByRole('button',{name:/^Autonomic dysreflexia help/});expect((await help.boundingBox()).height).toBeGreaterThanOrEqual(56);await help.click();
- await expect(page.locator('#messages').getByText(/1\. Sit up straight/)).toBeVisible();await expect(page.locator('#messages').getByText(/Call emergency services now/)).toBeVisible();
+ await expect(page.locator('#messages ol li').first()).toHaveText(/^Sit up straight/);await expect(page.locator('#messages ol li')).toHaveCount(6);await expect(page.locator('#messages').getByText(/Call emergency services now/)).toBeVisible();
  await expect(page.getByRole('button',{name:'Log blood pressure',exact:true})).toBeVisible();
 });
