@@ -59,3 +59,27 @@ export async function figuresForReply(env,question,sources,replyText='',max=2){
  for(const {row,title,score} of scored){if(score<best*0.5)break;const key=row.upload_id+':'+row.page;if(pages.has(key))continue;pages.add(key);picked.push({id:row.id,url:'/api/resources/figures/'+row.id,label:row.label,caption:row.caption,page:row.page,width:row.width,height:row.height,title});if(picked.length>=max)break;}
  return picked;
 }
+// The assistant chooses the pictures. It is shown the captions of the pictures in the documents it
+// is answering from and ends its answer with a line "PICTURES: 3, 7" (or "PICTURES: none"). That
+// line is removed before the answer is shown. Choosing by meaning avoids showing a picture that
+// merely shares a word with the question.
+const MAX_CATALOGUE=150;
+export async function figureCatalogue(env,sources,catalogue=[],question=''){
+ const have=new Set(catalogue.map(f=>f.upload_id)),uploads=[...new Set((sources||[]).map(s=>s.upload_id).filter(Boolean))].filter(u=>!have.has(u)).slice(0,5);
+ if(!uploads.length||!env.DB)return catalogue;
+ const titles=new Map((sources||[]).filter(s=>s.upload_id).map(s=>[s.upload_id,s.title||'']));
+ let rows=(await env.DB.prepare('SELECT id,upload_id,page,label,caption,width,height FROM resource_figures WHERE upload_id IN (SELECT value FROM json_each(?)) ORDER BY upload_id,page LIMIT 2000').bind(JSON.stringify(uploads)).all()).results;
+ const room=MAX_CATALOGUE-catalogue.length;
+ if(rows.length>room){const asked=keywords(question+' '+(sources||[]).map(s=>s.body??s.text??'').join(' '));rows=rows.map(row=>({row,score:[...keywords(row.caption)].filter(w=>asked.has(w)).length})).sort((a,b)=>b.score-a.score||a.row.page-b.row.page).slice(0,Math.max(0,room)).map(x=>x.row);}
+ for(const row of rows)catalogue.push({n:catalogue.length+1,id:row.id,upload_id:row.upload_id,label:row.label,caption:row.caption,page:row.page,width:row.width,height:row.height,title:titles.get(row.upload_id)||''});
+ return catalogue;
+}
+export const picturesForPrompt=catalogue=>(catalogue||[]).map(f=>`${f.n}. ${f.label.startsWith('Page ')?'':f.label+': '}${f.caption}`).join('\n');
+const pictureLine=/(?:^|\n)[ \t>*_-]*PICTURES?[ \t]*:[ \t]*([^\n]*)[ \t*_]*\s*$/i;
+export function takePictures(content,catalogue,max=3){
+ const text=String(content||''),match=text.match(pictureLine);
+ if(!match)return {content:text,figures:null};
+ const figures=[],seen=new Set();
+ for(const n of (match[1].match(/\d+/g)||[]).map(Number)){const f=(catalogue||[]).find(x=>x.n===n);const key=f&&f.upload_id+':'+f.page;if(!f||seen.has(key))continue;seen.add(key);figures.push({id:f.id,url:'/api/resources/figures/'+f.id,label:f.label,caption:f.caption,page:f.page,width:f.width,height:f.height,title:f.title});if(figures.length>=max)break;}
+ return {content:text.slice(0,match.index).trimEnd(),figures};
+}

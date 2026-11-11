@@ -41,3 +41,21 @@ test('matched chunks are widened with their neighbours and touching matches are 
  assert.deepEqual(out.map(p=>[p.body,p.score]),[['part3 part4 part5 part6',0.9],['seed text',0.75],['part9 part10 part11',0.7],['part0 part1',0.66]]);
  assert.ok(out.every(p=>p.chunkId===undefined));assert.equal(out[0].upload_id,'u-1');
 });
+test('the assistant picks the pictures: its PICTURES line is removed and mapped to the listed figures',async()=>{
+ const {takePictures,picturesForPrompt,figureCatalogue}=await import('../worker/resource-figures.js');
+ const rows=[{id:'f-1',upload_id:'u-1',page:20,label:'Figure 9',caption:'Pressure on Skin',width:1400,height:1800},{id:'f-2',upload_id:'u-1',page:20,label:'Figure 10',caption:'Sitting Positions',width:1400,height:1800},{id:'f-3',upload_id:'u-1',page:293,label:'Page 293',caption:'Shoulder Abduction, Shoulder Flexion',width:1400,height:1800},{id:'f-4',upload_id:'u-1',page:281,label:'Table 19',caption:'Summary Chart of Federal Tax Forms',width:1400,height:1800}];
+ const env={DB:{prepare:()=>({bind:()=>({all:async()=>({results:rows})})})}};
+ const catalogue=await figureCatalogue(env,[{upload_id:'u-1',title:'Yes You Can',body:'x'},{title:'Seed',body:'y'}]);
+ assert.deepEqual(catalogue.map(f=>f.n),[1,2,3,4]);assert.equal(catalogue[0].title,'Yes You Can');
+ assert.equal(await figureCatalogue(env,[{upload_id:'u-1'}],catalogue),catalogue);assert.equal(catalogue.length,4,'a document is listed once');
+ assert.equal(picturesForPrompt(catalogue),'1. Figure 9: Pressure on Skin\n2. Figure 10: Sitting Positions\n3. Shoulder Abduction, Shoulder Flexion\n4. Table 19: Summary Chart of Federal Tax Forms');
+ let picked=takePictures('Check your skin daily.\n\nPICTURES: 1, 2, 3, 99',catalogue);
+ assert.equal(picked.content,'Check your skin daily.');assert.deepEqual(picked.figures.map(f=>f.label),['Figure 9','Page 293'],'one picture per page, unknown numbers ignored');
+ assert.equal(picked.figures[0].url,'/api/resources/figures/f-1');assert.equal(picked.figures[0].title,'Yes You Can');
+ picked=takePictures('I am sorry you feel low.\n**PICTURES: none**',catalogue);assert.equal(picked.content,'I am sorry you feel low.');assert.deepEqual(picked.figures,[]);
+ picked=takePictures('No marker here. The pictures: 1 and 2 are nice.\nMore text.',catalogue);assert.equal(picked.figures,null);assert.match(picked.content,/More text\.$/);
+ assert.deepEqual(takePictures('A\nPICTURES: 3',[]).figures,[]);
+ const s=initialState({real:true});
+ const prompt=agentPrompt(s,{sources:[],memories:[],pictures:catalogue});assert.match(prompt,/Pictures available from these resources, by number:\n1\. Figure 9: Pressure on Skin/);assert.match(prompt,/an unrelated picture is worse than none/);
+ assert.doesNotMatch(agentPrompt(s,{sources:[],memories:[]}),/Pictures available/);
+});
