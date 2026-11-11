@@ -30,8 +30,17 @@ test('replies are read with the natural voice, in the chosen voice, and not by t
  const before=requests.length;await page.getByRole('button',{name:'Conversation'}).click();await ask(page);
  await page.waitForTimeout(300);expect(requests.length).toBe(before);
 });
-test('when the natural voice is unavailable the browser voice reads the reply instead',async({page})=>{
+test('when the AI voice is unavailable the reply stays on screen in silence; the browser voice is never used',async({page})=>{
  const requests=await open(page,{speechOk:false});await ask(page);
- await expect.poll(()=>page.evaluate(()=>window.__spoken)).toEqual(['860 milliliters recorded since 7:00 AM today.']);
- expect(requests.length).toBe(1);
+ await expect(page.locator('#recording-status')).toHaveText('The voice is unavailable right now. The reply is on screen.');
+ expect(requests.length).toBe(2);// one retry
+ expect(await page.evaluate(()=>window.__spoken)).toEqual([]);
+});
+test('sound refused by the phone waits for the next tap instead of being lost',async({page})=>{
+ await page.addInitScript(()=>{let blocked=true;window.__plays=0;const original=HTMLMediaElement.prototype.play;HTMLMediaElement.prototype.play=function(){if(this.src.startsWith('data:'))return Promise.resolve();window.__plays++;if(blocked){blocked=false;return Promise.reject(new DOMException('blocked','NotAllowedError'));}return original.call(this);};});
+ const requests=await open(page);await ask(page);
+ await expect(page.locator('#recording-status')).toHaveText('Tap anywhere to hear the reply.');expect(await page.evaluate(()=>window.__plays)).toBe(1);
+ await page.locator('#messages').click({position:{x:5,y:5}});
+ await expect(page.locator('#recording-status')).toHaveText('');expect(await page.evaluate(()=>window.__plays)).toBe(2);
+ expect(requests.length).toBe(1);expect(await page.evaluate(()=>window.__spoken)).toEqual([]);
 });

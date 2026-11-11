@@ -112,6 +112,8 @@ Version 0.11.0 groups medication check-ins by scheduled time, supports all/some 
 
 Version 0.11.3 keeps the latest chat in view through delayed photo/card layout and offers occurrence-specific reminder dismissal by button or voice, without recording care or disabling future schedules. Version 0.11.2 preserves reported medication selections across interrupted questions, resumes only the missing timing/review step, and prevents competing or empty check-in cards. Check-ins can be hidden for 30 minutes without recording care. Version 0.11.1 makes doctor reports PDF only, with full-page original-resolution images and readable dated notes. It also replaces vague notification blocking messages with browser-reported permission states and account-scoped technical setup diagnostics. See [journal and reminders](docs/journal-and-reminders.md).
 
+Version 0.14.4 reads replies only with the AI voice. The browser's built-in speech synthesis is removed entirely: a failed voice request is retried once and then the reply stays on screen in silence, and sound that a phone refuses to start without a tap is held and played on the next tap instead of falling back to the robotic voice.
+
 Version 0.14.3 shows the assistant's formatting instead of its marks: bold, italics, bulleted and numbered lists, headings and https links are rendered as page elements (`web/rich-text.js`), built from text nodes only so nothing in a reply can inject markup. Screen-reader announcements use the same text without marks.
 
 Version 0.14.2 removes keyword matching as the fallback for pictures: when the assistant lists none, only a picture its answer names outright is shown.

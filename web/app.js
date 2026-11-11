@@ -184,14 +184,15 @@ async function send(text = ui.message.value, responseToQuestion) {
 }
 // Spoken replies use the natural AI voice when the server offers one, and the browser's built-in voice otherwise.
 const VOICE_NAMES = {thalia:'Thalia (warm, clear)',luna:'Luna (friendly)',helena:'Helena (calm)',andromeda:'Andromeda (expressive)',apollo:'Apollo (confident)',arcas:'Arcas (natural)',orion:'Orion (approachable)'};
-const player = new Audio(); let playerUnlocked = false, playToken = 0, finishPlay = null;
+const player = new Audio(); let playerUnlocked = false, playToken = 0, finishPlay = null, pendingPlay = null;
+const voiceNote = text => { if (!recording && !manualVoiceActive && !handsFreeRunning) ui['recording-status'].textContent = text; };
 const naturalVoice = () => Boolean(config?.features?.speech);
 const chosenVoice = () => { const saved = localStorage.getItem('sciapp-voice'); return config?.features?.voices?.includes(saved) ? saved : config?.features?.defaultVoice; };
 // Phones only allow sound that starts from a tap or key press; the first one readies the player for later replies.
-function unlockAudio() { if (playerUnlocked || !player.paused) return; playerUnlocked = true; player.src = SILENT_AUDIO; player.play().catch(() => { playerUnlocked = false; }); }
+function unlockAudio() { if (pendingPlay) { const play = pendingPlay; pendingPlay = null; play(); return; } if (playerUnlocked || !player.paused) return; playerUnlocked = true; player.src = SILENT_AUDIO; player.play().catch(() => { playerUnlocked = false; }); }
 document.addEventListener('pointerdown',unlockAudio,{capture:true,passive:true}); document.addEventListener('keydown',unlockAudio,{capture:true});
-function stopPlayer() { playToken++; try { player.pause(); } catch {} const finish = finishPlay; finishPlay = null; finish?.(); }
-function silence() { speechGeneration++; window.speechSynthesis?.cancel(); stopPlayer(); assistantSpeaking = false; }
+function stopPlayer() { playToken++; pendingPlay = null; try { player.pause(); } catch {} const finish = finishPlay; finishPlay = null; finish?.(); }
+function silence() { speechGeneration++; stopPlayer(); assistantSpeaking = false; }
 async function speechAudio(text, current) {
  const headers = new Headers({'Content-Type':'application/json'}); const token = await window.Clerk?.session?.getToken(); if (token) headers.set('Authorization',`Bearer ${token}`);
  const response = await fetch('/api/speech',{method:'POST',credentials:'same-origin',headers,body:JSON.stringify({text,voice:chosenVoice()})});
@@ -203,31 +204,29 @@ function playAudio(url) {
  return new Promise((resolve,reject) => {
   finishPlay = resolve; const mine = () => token === playToken;
   player.onended = () => { if (mine()) resolve(); }; player.onpause = () => { if (mine() && !player.ended) resolve(); }; player.onerror = () => { if (mine()) reject(new Error('Audio failed.')); };
-  player.src = url; player.play().catch(e => { if (mine()) reject(e); });
+  // A phone may refuse sound that does not follow a tap. The reply then waits for the next tap or key press instead of being lost.
+  player.src = url; player.play().catch(e => { if (!mine()) return; if (e?.name !== 'NotAllowedError') { reject(e); return; } voiceNote('Tap anywhere to hear the reply.'); pendingPlay = () => { if (!mine()) return; voiceNote(''); player.play().catch(err => { if (mine()) reject(err); }); }; });
  }).finally(() => { if (token === playToken) finishPlay = null; URL.revokeObjectURL(url); });
 }
-function browserSpeak(text, done) {
- if (!text || !('speechSynthesis' in window)) { done(); return; }
- const utterance = new SpeechSynthesisUtterance(text); utterance.rate = .95; utterance.onend = done; utterance.onerror = done; speechSynthesis.speak(utterance);
-}
+// Replies are read only by the AI voice. If it cannot be reached the reply stays on screen in silence;
+// the browser's built-in robotic voice is never used.
 async function speak(text, force = false) {
- if (((muted || new Date(state?.settings?.quietUntil || 0).getTime() > Date.now()) && !force) || !text || !(naturalVoice() || 'speechSynthesis' in window)) { assistantSpeaking = false; resumeHandsFree(); return; }
+ if (((muted || new Date(state?.settings?.quietUntil || 0).getTime() > Date.now()) && !force) || !text || !naturalVoice()) { assistantSpeaking = false; resumeHandsFree(); return; }
  stopHandsFree(); silence(); const speechId = speechGeneration; assistantSpeaking = true;
  const generation = accountGeneration; const current = () => generation === accountGeneration && speechId === speechGeneration;
  const done = () => { if (current()) { assistantSpeaking = false; resumeHandsFree(); } };
- const chunks = speechChunks(text); let index = 0;
- if (naturalVoice()) {
-  try {
-   let next = speechAudio(chunks[0],current);
-   for (; index < chunks.length; index++) {
-    const url = await next; if (!url || !current()) { next = null; return; }
-    next = index + 1 < chunks.length ? speechAudio(chunks[index + 1],current) : null; next?.catch(() => {});
-    await playAudio(url); if (!current()) { next?.then(u => u && URL.revokeObjectURL(u)).catch(() => {}); return; }
-   }
-   done(); return;
-  } catch { if (!current()) return; }
- }
- browserSpeak(chunks.slice(index).join(' '),done);
+ const chunks = speechChunks(text);
+ // One retry covers a brief network or model hiccup.
+ const fetchChunk = async chunk => { try { return await speechAudio(chunk,current); } catch { if (!current()) return null; await new Promise(resolve => setTimeout(resolve,400)); return speechAudio(chunk,current); } };
+ try {
+  let next = fetchChunk(chunks[0]);
+  for (let index = 0; index < chunks.length; index++) {
+   const url = await next; if (!url || !current()) { next = null; return; }
+   next = index + 1 < chunks.length ? fetchChunk(chunks[index + 1]) : null; next?.catch(() => {});
+   await playAudio(url); if (!current()) { next?.then(u => u && URL.revokeObjectURL(u)).catch(() => {}); return; }
+  }
+ } catch { if (current()) voiceNote('The voice is unavailable right now. The reply is on screen.'); }
+ done();
 }
 const SILENT_AUDIO = 'data:audio/wav;base64,UklGRrQBAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YZABAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA';
 function setMute(value, persist = true) { muted = value; if (persist) localStorage.setItem('sciapp-muted',String(value)); if (value) { silence(); resumeHandsFree(); } ui.mute.setAttribute('aria-pressed',String(value)); ui.mute.setAttribute('aria-label',value ? 'Turn on spoken replies' : 'Mute spoken replies'); ui['mute-label'].textContent = value ? 'Sound off' : 'Sound on'; ui['mute-icon'].textContent = value ? '◌' : '◖'; }
