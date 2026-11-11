@@ -54,6 +54,8 @@ export async function figuresForReply(env,question,sources,replyText='',max=2){
  }
  scored.sort((a,b)=>b.score-a.score||a.row.page-b.row.page);
  const picked=[],pages=new Set();
- for(const {row,title} of scored){const key=row.upload_id+':'+row.page;if(pages.has(key))continue;pages.add(key);picked.push({id:row.id,url:'/api/resources/figures/'+row.id,label:row.label,caption:row.caption,page:row.page,width:row.width,height:row.height,title});if(picked.length>=max)break;}
+ // A weak match is not shown next to a strong one: extra pictures must be at least half as relevant as the best.
+ const best=scored[0]?.score||0;
+ for(const {row,title,score} of scored){if(score<best*0.5)break;const key=row.upload_id+':'+row.page;if(pages.has(key))continue;pages.add(key);picked.push({id:row.id,url:'/api/resources/figures/'+row.id,label:row.label,caption:row.caption,page:row.page,width:row.width,height:row.height,title});if(picked.length>=max)break;}
  return picked;
 }
