@@ -40,15 +40,22 @@ async function renderPdfPage(doc,number){
   scale*=0.75;quality=0.7;
  }
 }
+// How much of the page each drawn picture covers, in percent, from the page's drawing commands.
+async function pictureShares(pdfjs,page){
+ const OPS=pdfjs.OPS,paint=new Set([OPS.paintImageXObject,OPS.paintInlineImageXObject,OPS.paintImageMaskXObject,OPS.paintImageXObjectRepeat]),view=page.getViewport({scale:1}),shares=[];
+ try{const ops=await page.getOperatorList();let last=null;for(let i=0;i<ops.fnArray.length;i++){if(ops.fnArray[i]===OPS.transform)last=ops.argsArray[i];else if(paint.has(ops.fnArray[i])&&last)shares.push(Math.round(Math.abs(last[0]*last[3]-last[1]*last[2])/(view.width*view.height)*100));}}catch{}
+ return shares;
+}
 async function findFigures(source,id){
  const [pdfjs,captions]=await Promise.all([import('/pdf.min.mjs'),import('/figure-captions.js')]);pdfjs.GlobalWorkerOptions.workerSrc='/pdf.worker.min.mjs';
  figureNote('Looking for figures in the PDF.');
  const doc=await pdfjs.getDocument({data:new Uint8Array(await source.arrayBuffer()),isEvalSupported:false}).promise;
  try{
   const pages=[];
-  for(let number=1;number<=doc.numPages;number++){const page=await doc.getPage(number);pages.push({page:number,lines:captions.textLines((await page.getTextContent()).items)});page.cleanup();if(number%10===0||number===doc.numPages)figureNote(`Looking for figures: page ${number} of ${doc.numPages}.`);}
-  const figures=captions.collectFigures(pages).slice(0,400);
-  if(!figures.length){figureNote('No figure or table captions were found in this PDF.');return 0;}
+  for(let number=1;number<=doc.numPages;number++){const page=await doc.getPage(number);pages.push({page:number,lines:captions.textLines((await page.getTextContent()).items),images:await pictureShares(pdfjs,page)});page.cleanup();if(number%10===0||number===doc.numPages)figureNote(`Looking for figures: page ${number} of ${doc.numPages}.`);}
+  const captioned=captions.collectFigures(pages);
+  const figures=[...captioned,...captions.collectIllustrations(pages,new Set(captioned.map(f=>f.page)))].sort((a,b)=>a.page-b.page).slice(0,400);
+  if(!figures.length){figureNote('No figures, tables or illustrated pages were found in this PDF.');return 0;}
   await api('uploads/'+id+'/figures','DELETE');
   let saved=0,rendered=null;
   for(const figure of figures){

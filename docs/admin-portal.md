@@ -68,3 +68,7 @@ In chat, `figuresForReply` runs when an answer has shared sources and is not a c
 ## Nothing to do by hand for documents (0.11.14)
 
 Choosing a file, or Use this upload on an earlier upload, reads the text and finds the figures without further action. If the stored upload has no text (for example a book uploaded before the 1,500,000 character limit), the page asks the server to read the saved original again. The text box is collapsed under a line stating how many characters were read; open it only to review or edit. The Check if the transcript is ready button and the What the text below is selector are shown only for audio and video, where a person may supply a summary instead of the AI transcript.
+
+## Illustrated pages (0.13.5)
+
+Besides pages with a Figure or Table caption, the scan saves pages that contain photos or drawings and have headings but no caption, such as exercise sheets. The headings become the caption. Pages with pictures and no heading are treated as decoration and skipped.

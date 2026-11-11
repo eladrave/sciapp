@@ -84,7 +84,7 @@ function appendFigures(body,figures){
  for(const item of figures.slice(0,3)){
   if(typeof item?.url!=='string'||!/^\/api\/resources\/figures\/f-[a-f0-9-]+$/.test(item.url))continue;
   const figure=node('figure','resource-figure'),frame=node('div','resource-figure-frame'),img=node('img');
-  const label=[item.label,item.caption].filter(Boolean).join(': ');
+  const label=[/^Page \d+$/.test(item.label||'')?'':item.label,item.caption].filter(Boolean).join(': ');
   img.alt=label?`${label}. Page image from ${item.title||'a shared resource'}.`:'Figure from a shared resource';
   if(item.width>0&&item.height>0)frame.style.aspectRatio=`${item.width} / ${item.height}`;
   frame.append(img);
@@ -130,7 +130,7 @@ function renderMessages(position) {
   if(message.appHelp)onboardingUI.render(body,message.appHelp.topic);
   medicationCheckInUI.question(body,message,!state.medicationCheckInResume&&[...all].reverse().find(m=>m.role==='assistant')?.id===message.id);
   if(message.journalResult)journalUI.appendResults(body,message.journalResult);
-  if (message.sources?.length) { const sources = node('div','sources'); sources.append(node('strong','','Learn more')); for (const source of message.sources) { try { const url = new URL(source.url,location.origin); if (url.protocol !== 'https:') continue; const a = node('a','',source.title || url.hostname); a.href = url.href; a.target = '_blank'; a.rel = 'noopener noreferrer'; sources.append(a); } catch {} } body.append(sources); }
+  if (message.sources?.length) { const sources = node('div','sources'); sources.append(node('strong','','Learn more')); const listed = new Set(); for (const source of message.sources) { try { const url = new URL(source.url,location.origin); if (url.protocol !== 'https:' || url.origin === location.origin || listed.has(url.href)) continue; listed.add(url.href); const a = node('a','',source.title || url.hostname); a.href = url.href; a.target = '_blank'; a.rel = 'noopener noreferrer'; sources.append(a); } catch {} } if (listed.size) body.append(sources); }
   if (message.figures?.length) appendFigures(body,message.figures);
   const answers=questionChoices(message);
   if (answers.choices.length) { const options = node('div','quick-replies');options.setAttribute('role','group');options.setAttribute('aria-label','Suggested answers');const currentQuestion=[...all].reverse().find(m=>m.role==='assistant')?.id;answers.choices.forEach(text=>{const choice=button(text,'',()=>chooseReply(text,answers.reference));choice.dataset.staleQuestion=String(!!answers.reference&&message.id!==currentQuestion);choice.disabled=busy||uploadBusy||recording||choice.dataset.staleQuestion==='true';options.append(choice);});body.append(options);if(answers.reference){body.append(node('p','answer-hint',answers.hint));const other=button('Type or say something else','secondary',()=>{focusComposer(true);ui.announcer.textContent='Type your answer, or select Listen to speak.';});other.dataset.answerControl='true';other.dataset.staleQuestion=String(message.id!==currentQuestion);other.disabled=busy||uploadBusy||recording||other.dataset.staleQuestion==='true';body.append(other);} }

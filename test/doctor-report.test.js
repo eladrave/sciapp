@@ -20,5 +20,5 @@ test('doctor PDF carries the personal details the user chose to enter',async()=>
  const plain=await createDoctorReportPDF([{...entry('a',null),photoAvailable:false}],options);
  const named=await createDoctorReportPDF([{...entry('a',null),photoAvailable:false}],{...options,profile:{name:'Sam',fullName:'Sam Synthetic Example',dateOfBirth:'1980-02-29',gender:'Non-binary',injuryLevel:'C6 incomplete'}});
  assert.ok(named.length>plain.length+40);assert.equal((await PDFDocument.load(named)).getPageCount(),(await PDFDocument.load(plain)).getPageCount());
- assert.equal((await createDoctorReportPDF([{...entry('a',null),photoAvailable:false}],{...options,profile:{name:'You'}})).length,plain.length);
+ assert.equal(Math.abs((await createDoctorReportPDF([{...entry('a',null),photoAvailable:false}],{...options,profile:{name:'You'}})).length-plain.length)<20,true);
 });

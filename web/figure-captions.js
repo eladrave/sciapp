@@ -35,3 +35,30 @@ export function collectFigures(pages){
  for(const {page,lines} of pages)for(const caption of findCaptions(lines)){const existing=byLabel.get(caption.label);if(!existing||caption.strong&&!existing.strong)byLabel.set(caption.label,{...caption,page});}
  return [...byLabel.values()].sort((a,b)=>a.page-b.page||a.label.localeCompare(b.label,undefined,{numeric:true}));
 }
+// Illustrated pages: a page with photos or drawings but no "Figure N" caption (exercise sheets,
+// positioning guides). The headings on the page name what the pictures show, so they become the
+// caption. A page with pictures and no heading is treated as decoration and skipped.
+const headingWord=/^(?:[A-Z][A-Za-z'’()-]*|\d+[A-Za-z]*|\([A-Za-z]+\)|and|or|of|the|to|for|in|on|with|a|an|\/|&|[A-Z][a-z]+\/[A-Z][a-z]+(?:\/[A-Z][a-z]+)*)$/;
+export function pageHeadings(lines,repeated=new Set()){
+ const found=[];
+ for(const raw of lines||[]){
+  const line=String(raw||'').replace(/\s+/g,' ').trim();
+  if(line.length<4||line.length>60||/[.:;,!?]$/.test(line)||repeated.has(line)||pattern.test(line)||/^(?:appendix|chapter|section|resources?|publications?|notes?|contents)\b/i.test(line)||/^\d+$/.test(line))continue;
+  const words=line.split(' ');if(words.length>7||!/^[A-Z]/.test(line)||!words.every(w=>headingWord.test(w))||words.filter(w=>/^[A-Z]/.test(w)).length<Math.min(2,words.length))continue;
+  if(!found.includes(line))found.push(line);
+ }
+ return found;
+}
+// images: share of the page area (in percent) covered by each picture drawn on the page.
+export const pictureShare=images=>(images||[]).filter(share=>share>=3&&share<=70).reduce((sum,share)=>sum+share,0);
+export function collectIllustrations(pages,captionedPages=new Set()){
+ const seen=new Map();for(const {lines} of pages)for(const line of new Set((lines||[]).map(l=>String(l).replace(/\s+/g,' ').trim())))seen.set(line,(seen.get(line)||0)+1);
+ const repeated=new Set([...seen].filter(([,count])=>count>=3).map(([line])=>line));
+ const found=[];
+ for(const {page,lines,images} of pages){
+  if(captionedPages.has(page)||pictureShare(images)<8)continue;
+  const headings=pageHeadings(lines,repeated);if(!headings.length)continue;
+  found.push({label:`Page ${page}`,caption:headings.slice(0,5).join(', ').slice(0,200),page});
+ }
+ return found;
+}

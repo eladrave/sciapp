@@ -53,11 +53,33 @@ test('figures are stored per upload, stay private until the resource is publishe
   // Never two images of the same page, never more than two, nothing for unrelated questions or sources without an upload.
   figures=await figuresForReply(env,'daily fluid plan and autonomic dysreflexia signs with bowel program positions',[source('text')],'');
   assert.equal(figures.length,2);assert.equal(new Set(figures.map(f=>f.page)).size,2);
+  // Illustrated pages (exercise sheets without a Figure caption) match by their headings.
+  await saveFigure(env,upload,figureForm({label:'Page 293',page:'293',caption:'Shoulder Abduction, Shoulder Flexion, Shoulder Extension'}));
+  await saveFigure(env,upload,figureForm({label:'Page 295',page:'295',caption:'Wrist Flexion/Extension, Wrist Deviation'}));
+  await saveFigure(env,upload,figureForm({label:'Page 6',page:'6',caption:'Foreword'}));
+  await assert.rejects(saveFigure(env,upload,figureForm({label:'Page 12345'})),e=>e.status===400);await assert.rejects(saveFigure(env,upload,figureForm({label:'Photo 3'})),e=>e.status===400);
+  figures=await figuresForReply(env,'Give me some shoulder exercises',[source('Range of motion.')],'Shoulder abduction: bring your arm out to your side.');
+  assert.equal(figures[0].label,'Page 293');assert.equal(figures[0].caption,'Shoulder Abduction, Shoulder Flexion, Shoulder Extension');
+  figures=await figuresForReply(env,'Can you show me some visuals for those exercises?',[source('Range of motion.')],'The pictures cover shoulder abduction, shoulder flexion and wrist deviation.',3);
+  assert.deepEqual(figures.map(f=>f.label).sort(),['Page 293','Page 295']);
+  assert.deepEqual((await figuresForReply(env,'Can you show me some visuals?',[source('x')],'Here is a foreword about travel.',3)).filter(f=>f.label.startsWith('Page')),[]);
   assert.deepEqual(await figuresForReply(env,'What time is it?',[source('Unrelated passage.')],'It is noon.'),[]);
   assert.deepEqual(await figuresForReply(env,'autonomic dysreflexia',[{title:'Seed',body:'x'}],''),[]);
   assert.ok(!mentionsFigure17(await figuresForReply(env,'see figure 1',[source('x')],'')));
   assert.deepEqual([...keywords('What are the injuries and bladder programs?')].sort(),['bladder','program']);
-  assert.equal(await deleteFigures(env,upload),4);assert.equal((await RESOURCES.list({prefix:'figures/'})).objects.length,0);assert.deepEqual(await listFigures(env,upload),[]);
+  assert.equal(await deleteFigures(env,upload),7);assert.equal((await RESOURCES.list({prefix:'figures/'})).objects.length,0);assert.deepEqual(await listFigures(env,upload),[]);
  }finally{await mf.dispose();}
 });
 const mentionsFigure17=figures=>figures.some(f=>['Figure 12','Figure 20'].includes(f.label));
+test('illustrated pages are found from their pictures and headings; decoration and captioned pages are skipped',async()=>{
+ const {pageHeadings,collectIllustrations,pictureShare}=await import('../web/figure-captions.js');
+ assert.deepEqual(pageHeadings(['Appendix A','Shoulder Abduction','S: Lying on your back with your arm at your','side and your palm up.','Shoulder Flexion','Scapular Retraction/Protraction','Straight Leg Raise (SLR)','282','Yes, You Can!','Figure 7 | Lower Motor Neuron','Bring your arm out','Chapter 2'],new Set(['Yes, You Can!'])),['Shoulder Abduction','Shoulder Flexion','Scapular Retraction/Protraction','Straight Leg Raise (SLR)']);
+ assert.equal(pictureShare([7,7,7,2,95]),21);
+ const header=['Running Header'],pages=[
+  {page:1,lines:[...header,'Shoulder Abduction','S: Lying on your back.','Shoulder Flexion'],images:[7,7,7]},
+  {page:2,lines:[...header,'Hip Extension','text here.'],images:[2,2]},
+  {page:3,lines:[...header,'Just a paragraph of running text that is long.'],images:[40]},
+  {page:4,lines:[...header,'Wrist Deviation'],images:[9]},
+  {page:5,lines:[...header,'Cover Art'],images:[100]}];
+ assert.deepEqual(collectIllustrations(pages,new Set([4])),[{label:'Page 1',caption:'Shoulder Abduction, Shoulder Flexion',page:1}]);
+});
