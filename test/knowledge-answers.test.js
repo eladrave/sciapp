@@ -28,6 +28,8 @@ test('search_resources adds passages to the turn so the answer can cite them and
  assert.equal(sources.length,1);assert.equal(sources[0].upload_id,'u-1');assert.equal(reply.sources.length,1);
  let note;await runCareAgent({},'synthetic',s,'What about kites?',{sources:[],search},async(_e,_s,_t,c)=>{if(!c.toolTrace.length)return {kind:'tool',tool:tool('search_resources',{query:'kites'})};note=JSON.parse(c.toolTrace.at(-1).content).note;return {kind:'reply',content:'The resources do not cover that yet.'};});
  assert.match(note,/Nothing in the resources matches/);
+ const own=await runCareAgent({},'synthetic',s,'Show me my catheter records from today',{sources:[{title:'Yes You Can',url:'/u',text:'x'}]},async(_e,_s,_t,c)=>c.toolTrace.length?{kind:'reply',content:'Your journal has no catheter records for today.',sources:[{title:'Yes You Can',url:'/u'}]}:{kind:'tool',tool:tool('query_care_journal',{purpose:'show',category:'catheter',relativeDate:'today'})});
+ assert.deepEqual(own.sources,[]);
  assert.ok(agentCareTools.some(t=>t.name==='search_resources'));
  const prompt=agentPrompt(s,{sources:[],memories:[]});assert.match(prompt,/never from the journal/);assert.match(prompt,/search_resources/);
 });
