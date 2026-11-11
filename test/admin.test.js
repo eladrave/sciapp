@@ -28,7 +28,7 @@ test('administrator auth, CSRF, resource review workflow, archive retrieval, set
  assert.equal((await req('/api/admin/ai','PUT',{version:0,settings:legacy})).status,200);
  assert.equal((await req('/api/admin/ai','PUT',{version:0,settings:legacy})).status,409);
  assert.equal((await req('/api/admin/ai','PUT',{version:1,settings:{...legacy,provider:'openai'}})).status,400);
- const overview=await(await req('/api/admin/overview')).json();assert.equal(overview.memoryPolicy,'Always on for every signed-in user');assert.equal(overview.appVersion,'0.14.4');
+ const overview=await(await req('/api/admin/overview')).json();assert.equal(overview.memoryPolicy,'Always on for every signed-in user');assert.equal(overview.appVersion,'0.15.0');
  assert.equal((await req('/api/admin/settings','PUT',{version:0,settings:{retrievalThreshold:0.7,resourceReviewDays:90}},{'X-Admin-CSRF':''})).status,403);
  assert.equal((await req('/api/admin/settings','PUT',{version:0,settings:{retrievalThreshold:0.7,resourceReviewDays:90}})).status,200);
  assert.equal((await req('/api/admin/settings','PUT',{version:0,settings:{retrievalThreshold:0.7,resourceReviewDays:90}})).status,409);

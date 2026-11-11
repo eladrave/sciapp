@@ -9,7 +9,7 @@ export const AD_STEPS=[
  'Check your skin for pressure, a cut, a burn, something sharp, or an ingrown toenail.',
  'Check your blood pressure every 5 minutes if you can, and tell me each reading so I can keep a record.'
 ];
-export const AD_EMERGENCY='Call emergency services now if your blood pressure stays high (top number 150 or more), the symptoms do not ease, or you cannot find the cause. Say the words autonomic dysreflexia.';
+export const AD_EMERGENCY='Use the Call button below, or call emergency services, if your blood pressure stays high (top number 150 or more), the symptoms do not ease, or you cannot find the cause. Say the words autonomic dysreflexia, and give your location shown below.';
 export function adHelp(){
  const content=['Autonomic dysreflexia can be an emergency. Do these steps now, in order:',...AD_STEPS.map((step,i)=>`${i+1}. ${step}`),AD_EMERGENCY,'These are general first steps. If your doctor gave you your own plan or medicine for this, follow that.'].join('\n');
  return message('assistant',content,{adHelp:true,options:['Log blood pressure','I feel better now']});

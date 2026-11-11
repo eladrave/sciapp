@@ -126,6 +126,7 @@ function renderMessages(position) {
   const body = node('div','message-body'); body.append(node('div','message-meta',message.role === 'user' ? 'YOU' : 'SCIAPP COMPANION'));
   if (message.role === 'user') body.append(node('p','message-text',message.content || '')); else { const text = node('div','message-text rich-text'); text.append(renderRichText(document,message.content || '')); body.append(text); }
   if (message.photoId && state.photos?.some(photo => photo.id === message.photoId)) { const img = node('img','photo-message'); img.alt = 'Photo attached to this message'; body.append(img); photoLoads.push(() => loadHistoricalPhoto(img,message.photoId,generation)); body.append(button('Delete photo','secondary',() => deleteSavedPhoto(message.photoId))); }
+  if (message.adHelp) body.append(emergencyPanel(message));
   if (message.proposal) body.append(proposalCard(message.proposal));
   healthUI.render(body,message);
   if(message.appHelp)onboardingUI.render(body,message.appHelp.topic);
@@ -239,6 +240,38 @@ function switchPage(page, {latest = false} = {}) {
  if (page === 'Settings') refreshNotificationStatus();
  if (page === 'Conversation') { if (latest) chatScroll.latest(); else if (previous !== page) chatScroll.restore(); }
  else if (previous !== page) $('#main').scrollTop = 0;
+}
+// Emergency panel under the autonomic dysreflexia steps: one tap to call, and where the person is,
+// so they can tell the dispatcher. The location is read on this device and never sent to the server.
+let lastPosition = null, locating = false;
+function locationText() {
+ if (locating) return 'Finding your location…';
+ if (lastPosition?.failed) return lastPosition.failed;
+ if (!lastPosition) return 'Your location has not been read yet.';
+ return `Your location now: latitude ${lastPosition.latitude.toFixed(5)}, longitude ${lastPosition.longitude.toFixed(5)} (within about ${Math.max(1,Math.round(lastPosition.accuracy))} metres).`;
+}
+function refreshLocationViews() { for (const el of document.querySelectorAll('.emergency-location')) el.textContent = locationText(); for (const link of document.querySelectorAll('.emergency-map')) { link.hidden = !lastPosition?.latitude; if (lastPosition?.latitude) link.href = `https://www.google.com/maps?q=${lastPosition.latitude.toFixed(6)},${lastPosition.longitude.toFixed(6)}`; } }
+function locate() {
+ if (locating) return;
+ if (!navigator.geolocation) { lastPosition = {failed:'This device cannot share its location with the app. Tell the dispatcher your address.'}; refreshLocationViews(); return; }
+ locating = true; refreshLocationViews();
+ navigator.geolocation.getCurrentPosition(position => { locating = false; lastPosition = {latitude:position.coords.latitude,longitude:position.coords.longitude,accuracy:position.coords.accuracy,at:Date.now()}; refreshLocationViews(); },
+  failure => { locating = false; lastPosition = {failed:failure.code === 1 ? 'Location is turned off for this app. Allow location for this site in your browser settings, or tell the dispatcher your address.' : 'Your location could not be found right now. Tell the dispatcher your address.'}; refreshLocationViews(); },
+  {enableHighAccuracy:true,timeout:15000,maximumAge:60000});
+}
+function emergencyPanel(message) {
+ const panel = node('section','emergency-panel'); panel.setAttribute('aria-label','Emergency call and your location');
+ const number = state.profile?.emergencyNumber || '911';
+ const call = node('a','emergency-call',`Call ${number}`); call.href = `tel:${number}`; call.setAttribute('aria-label',`Call ${number} now`);
+ panel.append(call,node('p','emergency-say','Say: "autonomic dysreflexia, spinal cord injury", then where you are.'));
+ panel.append(node('p','emergency-address',state.profile?.address ? `Your home address: ${state.profile.address}` : 'No home address saved. Add it in Settings, About you, so it shows here.'));
+ const where = node('p','emergency-location',locationText()); where.setAttribute('role','status');
+ const map = node('a','emergency-map','Open this location in Maps'); map.target = '_blank'; map.rel = 'noopener noreferrer'; map.hidden = true;
+ panel.append(where,map,button('Update my location','secondary',locate));
+ // Read the location by itself when the help was just asked for, and keep a recent reading.
+ const recent = Date.now() - Date.parse(message.createdAt) < 10 * 60000, stale = !lastPosition || lastPosition.failed || Date.now() - lastPosition.at > 120000;
+ if (recent && stale && !locating && !lastPosition?.failed) queueMicrotask(locate); else queueMicrotask(refreshLocationViews);
+ return panel;
 }
 // Caregiver sharing: the owner makes a one-time link and sends it themselves; a signed-in caregiver
 // accepts it and can then see that person's day, view only.
@@ -354,10 +387,10 @@ let editingProfile=false;
 function appendAboutYou(parent){
  const p=state.profile||{},section=node('section','profile-section');section.setAttribute('aria-label','About you');section.append(node('h3','','About you'));
  const born=p.dateOfBirth?new Date(p.dateOfBirth+'T00:00:00Z').toLocaleDateString([], {timeZone:'UTC',dateStyle:'long'}):'';
- const rows=[['Preferred name',p.name&&p.name!=='You'?p.name:''],['Full name',p.fullName||''],['Gender',p.gender||''],['Date of birth',born],['Spinal cord injury level',p.injuryLevel||'']];
+ const rows=[['Preferred name',p.name&&p.name!=='You'?p.name:''],['Full name',p.fullName||''],['Gender',p.gender||''],['Date of birth',born],['Spinal cord injury level',p.injuryLevel||''],['Home address',p.address||''],['Emergency number',p.emergencyNumber||'911 (default)']];
  if(!editingProfile){
   const list=node('dl','profile-details');for(const [label,value] of rows){list.append(node('dt','',label),node('dd',value?'':'muted',value||'Not set'));}
-  const edit=button(rows.some(r=>r[1])?'Edit my details':'Add my details','secondary',()=>{editingProfile=true;renderPanel();document.getElementById('profile-name-input')?.focus();});
+  const edit=button(rows.slice(0,-1).some(r=>r[1])||p.emergencyNumber?'Edit my details':'Add my details','secondary',()=>{editingProfile=true;renderPanel();document.getElementById('profile-name-input')?.focus();});
   section.append(list,edit,node('p','answer-hint','Or tell me in the conversation, for example “my full name is …”.'));parent.append(section);return;
  }
  const form=node('form','profile-form');form.noValidate=true;
@@ -368,12 +401,14 @@ function appendAboutYou(parent){
  const gender=document.createElement('select');for(const value of ['',...GENDERS,...(p.gender&&!GENDERS.includes(p.gender)?[p.gender]:[])]){const o=document.createElement('option');o.value=value;o.textContent=value||'Not set';gender.append(o);}gender.value=p.gender||'';gender.autocomplete='sex';field('profile-gender','Gender',gender);
  const dob=input('profile-dob','Date of birth',p.dateOfBirth,{type:'date',autocomplete:'bday',max:new Date().toISOString().slice(0,10),min:'1900-01-01'});
  const injury=input('profile-injury','Spinal cord injury level (optional, for example C6 incomplete)',p.injuryLevel,{maxLength:80});
+ const address=input('profile-address','Home address (shown on the emergency panel so you can tell the medics)',p.address,{autocomplete:'street-address',maxLength:200});
+ const emergency=input('profile-emergency','Emergency number to call (leave empty for 911)',p.emergencyNumber,{inputMode:'tel',maxLength:16});
  const save=node('button','primary','Save my details');save.type='submit';
  const cancel=button('Cancel','secondary',()=>{editingProfile=false;error();renderPanel();});
  const actions=node('div','profile-actions');actions.append(save,cancel);form.append(actions);
  form.addEventListener('submit',async event=>{
   event.preventDefault();if(busy)return;save.disabled=true;error();
-  try{const result=await api('/api/profile',{method:'POST',body:JSON.stringify({name:name.value,fullName:fullName.value,gender:gender.value,dateOfBirth:dob.value,injuryLevel:injury.value})});editingProfile=false;update(result.state);ui.announcer.textContent='Your details were saved.';}
+  try{const result=await api('/api/profile',{method:'POST',body:JSON.stringify({name:name.value,fullName:fullName.value,gender:gender.value,dateOfBirth:dob.value,injuryLevel:injury.value,address:address.value,emergencyNumber:emergency.value})});editingProfile=false;update(result.state);ui.announcer.textContent='Your details were saved.';}
   catch(e){save.disabled=false;error(e.message);}
  });
  section.append(form);parent.append(section);
@@ -619,7 +654,7 @@ ui.account.addEventListener('click',async () => {
   try { await api('/api/session',{method:'DELETE'}); await window.sciappSignOut(); showWelcomeAfterSignOut(); } catch(e) {error(e.message);}
  } else if (config?.clerkPublishableKey) await window.sciappSignIn();
 });
-function clearAccountWork() {sharing = null; sharedView = null; inviteLink = null; visibleMessages = MESSAGE_PAGE; clearFigureCache(); lastNotificationDiagnostic=''; journalUI.reset();medicationCheckInUI.reset(); closePhotoOptions(); chatScroll.reset(); notificationBusy = false; pushServerStatus = null; pushStatus = {supported:false,enabled:false,permission:'unknown'}; accountGeneration++; voiceGeneration++; pendingRequests.forEach(controller => controller.abort()); pendingRequests.clear(); clearTimeout(approvalTimer); stopHandsFree(); handsFreePaused = false; if(recognition) {recognition.onend = null; recognition.abort(); recognition = null;} if(recorder?.state === 'recording') recorder.stop(); recorder = null; audioChunks = []; recordStream?.getTracks().forEach(track => track.stop()); resetRecording(); assistantSpeaking = false; silence(); uploadBusy = false; setBusy(false); revokeHistoricalPhotos(); removePhoto({deleteRemote:false}); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; ui.announcer.textContent = ''; ui.app.hidden = true; ui.welcome.hidden = false; switchPage('Conversation'); }
+function clearAccountWork() {lastPosition = null; locating = false; sharing = null; sharedView = null; inviteLink = null; visibleMessages = MESSAGE_PAGE; clearFigureCache(); lastNotificationDiagnostic=''; journalUI.reset();medicationCheckInUI.reset(); closePhotoOptions(); chatScroll.reset(); notificationBusy = false; pushServerStatus = null; pushStatus = {supported:false,enabled:false,permission:'unknown'}; accountGeneration++; voiceGeneration++; pendingRequests.forEach(controller => controller.abort()); pendingRequests.clear(); clearTimeout(approvalTimer); stopHandsFree(); handsFreePaused = false; if(recognition) {recognition.onend = null; recognition.abort(); recognition = null;} if(recorder?.state === 'recording') recorder.stop(); recorder = null; audioChunks = []; recordStream?.getTracks().forEach(track => track.stop()); resetRecording(); assistantSpeaking = false; silence(); uploadBusy = false; setBusy(false); revokeHistoricalPhotos(); removePhoto({deleteRemote:false}); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; ui.announcer.textContent = ''; ui.app.hidden = true; ui.welcome.hidden = false; switchPage('Conversation'); }
 function showWelcomeAfterSignOut() {
  clearAccountWork(); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; silence(); ui.app.hidden = true; ui.welcome.hidden = false; ui.account.hidden = true;
 }

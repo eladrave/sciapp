@@ -25,3 +25,12 @@ test('details given in conversation go through a settings review and reach the a
  assert.equal(careContext(s,{}).profile.dateOfBirth,'1975-06-01');
  assert.throws(()=>proposal(s,'settings',{dateOfBirth:'tomorrow'}));
 });
+test('home address and emergency number are optional, validated and removable',()=>{
+ const s=initialState({real:true});
+ updateProfile(s,{address:' 12 Synthetic Street,  Apt 4, Example City ',emergencyNumber:'112'},at);
+ assert.equal(s.profile.address,'12 Synthetic Street, Apt 4, Example City');assert.equal(s.profile.emergencyNumber,'112');
+ assert.equal(profileSummary(s.profile).find(r=>r.label==='Home address').value,'12 Synthetic Street, Apt 4, Example City');
+ for(const bad of [{emergencyNumber:'call mom'},{emergencyNumber:'9'},{emergencyNumber:'911; rm'},{address:'x'.repeat(201)}])assert.throws(()=>normalizeProfile(bad,at),e=>e.status===400);
+ updateProfile(s,{address:'',emergencyNumber:''},at);assert.equal(s.profile.address,undefined);assert.equal(s.profile.emergencyNumber,undefined);
+ const reply=proposal(s,'settings',{address:'12 Synthetic Street',emergencyNumber:'999'});assert.deepEqual(reply.proposal.details,['Home address: 12 Synthetic Street','Emergency number: 999']);
+});

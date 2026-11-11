@@ -51,7 +51,7 @@ test('autonomic dysreflexia help gives the steps in order and is one tool call a
  assert.equal(reply.adHelp,true);assert.match(reply.content,/^Autonomic dysreflexia can be an emergency\./);
  AD_STEPS.forEach((step,i)=>assert.ok(reply.content.includes(`${i+1}. ${step}`)));
  assert.ok(reply.content.indexOf('Sit up')<reply.content.indexOf('bladder')&&reply.content.indexOf('bladder')<reply.content.indexOf('bowel'));
- assert.match(reply.content,/Call emergency services now.*autonomic dysreflexia/);assert.deepEqual(reply.options,['Log blood pressure','I feel better now']);
+ assert.match(reply.content,/Use the Call button below, or call emergency services, if.*autonomic dysreflexia.*your location shown below/);assert.deepEqual(reply.options,['Log blood pressure','I feel better now']);
  const s=fresh();const r=await structuredCareTool(s,'I have a pounding headache and I am sweating',{name:'autonomic_dysreflexia_help',arguments:{}},{});
  assert.equal(r.reply.adHelp,true);assert.equal(s.events.length,0);
  assert.ok(agentCareTools.some(t=>t.name==='autonomic_dysreflexia_help'));
