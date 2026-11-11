@@ -75,11 +75,12 @@ export async function figureCatalogue(env,sources,catalogue=[],question=''){
  return catalogue;
 }
 export const picturesForPrompt=catalogue=>(catalogue||[]).map(f=>`${f.n}. ${f.label.startsWith('Page ')?'':f.label+': '}${f.caption}`).join('\n');
-const pictureLine=/(?:^|\n)[ \t>*_-]*PICTURES?[ \t]*:[ \t]*([^\n]*)[ \t*_]*\s*$/i;
+// The line is usually last, but the assistant sometimes puts its closing reminder after it, so it is found anywhere.
+const pictureLine=/^[ \t>*_-]*PICTURES[ \t]*:[ \t]*([^\n]*?)[ \t*_]*$/gm;
 export function takePictures(content,catalogue,max=3){
- const text=String(content||''),match=text.match(pictureLine);
+ const text=String(content||''),matches=[...text.matchAll(pictureLine)],match=matches.at(-1);
  if(!match)return {content:text,figures:null};
  const figures=[],seen=new Set();
  for(const n of (match[1].match(/\d+/g)||[]).map(Number)){const f=(catalogue||[]).find(x=>x.n===n);const key=f&&f.upload_id+':'+f.page;if(!f||seen.has(key))continue;seen.add(key);figures.push({id:f.id,url:'/api/resources/figures/'+f.id,label:f.label,caption:f.caption,page:f.page,width:f.width,height:f.height,title:f.title});if(figures.length>=max)break;}
- return {content:text.slice(0,match.index).trimEnd(),figures};
+ return {content:text.replace(pictureLine,'').replace(/\n{3,}/g,'\n\n').trim(),figures};
 }

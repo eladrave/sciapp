@@ -53,6 +53,7 @@ test('the assistant picks the pictures: its PICTURES line is removed and mapped 
  assert.equal(picked.content,'Check your skin daily.');assert.deepEqual(picked.figures.map(f=>f.label),['Figure 9','Page 293'],'one picture per page, unknown numbers ignored');
  assert.equal(picked.figures[0].url,'/api/resources/figures/f-1');assert.equal(picked.figures[0].title,'Yes You Can');
  picked=takePictures('I am sorry you feel low.\n**PICTURES: none**',catalogue);assert.equal(picked.content,'I am sorry you feel low.');assert.deepEqual(picked.figures,[]);
+ picked=takePictures('Check your skin daily.\n\nPICTURES: 1\n\nAsk your care team about anything you find.',catalogue);assert.equal(picked.content,'Check your skin daily.\n\nAsk your care team about anything you find.');assert.deepEqual(picked.figures.map(f=>f.label),['Figure 9']);
  picked=takePictures('No marker here. The pictures: 1 and 2 are nice.\nMore text.',catalogue);assert.equal(picked.figures,null);assert.match(picked.content,/More text\.$/);
  assert.deepEqual(takePictures('A\nPICTURES: 3',[]).figures,[]);
  const s=initialState({real:true});
