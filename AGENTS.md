@@ -16,3 +16,4 @@ This product is for people who may have limited use of their hands. Minimize req
 - Open the conversation on the latest turns only. Earlier turns load in batches from a See earlier messages control that keeps the reader's place.
 - Answer a question with the answer. How much, how many, when and whether get the number or fact in words, calculated by the server from approved records. Show journal cards only when the user asks to see or show records, photos or the journal.
 - The Today page shows today only: reminders and records for the current local day in the account timezone, never tomorrow or later days.
+- Spoken replies use the natural AI voice through `/api/speech`, with the browser voice only as a fallback. Send the voice only reply text, never stored records in bulk, and keep mute, quiet hours and hands-free pausing in control of all audio.

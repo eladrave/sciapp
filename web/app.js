@@ -5,6 +5,7 @@ import {createJournalUI} from './journal.js';
 import { questionChoices } from './question-choices.js';
 import { createHealthUI } from './health-systems.js';
 import { createChatScroll } from './chat-scroll.js';
+import { speechChunks } from './speech-text.js';
 import { confirmationDelay } from './conversation-controls.js';
 import { notificationStatus, reportNotificationDiagnostic, watchNotificationPermission, pendingNotificationEnable, permissionGuidance, enableNotifications, disableNotifications, detachBrowserNotifications, testNotification } from './notifications.js';
 const $ = (selector) => document.querySelector(selector);
@@ -55,7 +56,7 @@ function update(next) {
  if (next) {
   if (state && next.settings?.muted !== state.settings?.muted && typeof next.settings?.muted === 'boolean') setMute(next.settings.muted);
   state = next;
-  if (new Date(state.settings?.quietUntil || 0).getTime() > Date.now()) window.speechSynthesis?.cancel();
+  if (new Date(state.settings?.quietUntil || 0).getTime() > Date.now() && assistantSpeaking) { silence(); resumeHandsFree(); }
  }
  if (!state) return;
  if (!state.settings?.handsFree) { stopHandsFree(); handsFreePaused = false; }
@@ -173,13 +174,55 @@ async function send(text = ui.message.value, responseToQuestion) {
  try { const result = await api('/api/chat',{method:'POST',body:JSON.stringify({message:content || 'Help me record this photo.',...(medicationCheckInUI.selectionContext()?{medicationSelection:medicationCheckInUI.selectionContext()}:{}),...(responseToQuestion?{responseToQuestion}:{}),...(photo ? {photoId:photo.id} : {})})}); ui.message.value = ''; ui.message.style.height = ''; removePhoto({deleteRemote:false}); receive(result,state.messages?.some(message => pendingSettings.has(message.proposal?.id) && result.state.messages?.some(next => next.proposal?.id === message.proposal.id && next.proposal.status === 'approved'))); }
  catch(e) { if(e.name !== 'AbortError') error(e.message); } finally { if(generation === accountGeneration) { setBusy(false); focusComposer(); resumeHandsFree(); } }
 }
-function speak(text) {
- if (muted || new Date(state?.settings?.quietUntil || 0).getTime() > Date.now() || !text || !('speechSynthesis' in window)) { assistantSpeaking = false; resumeHandsFree(); return; }
- stopHandsFree(); const speechId = ++speechGeneration; speechSynthesis.cancel(); assistantSpeaking = true;
- const generation = accountGeneration; const utterance = new SpeechSynthesisUtterance(text); utterance.rate = .95;
- const done = () => { if(generation === accountGeneration && speechId === speechGeneration) {assistantSpeaking = false; resumeHandsFree();} }; utterance.onend = done; utterance.onerror = done; speechSynthesis.speak(utterance);
+// Spoken replies use the natural AI voice when the server offers one, and the browser's built-in voice otherwise.
+const VOICE_NAMES = {thalia:'Thalia (warm, clear)',luna:'Luna (friendly)',helena:'Helena (calm)',andromeda:'Andromeda (expressive)',apollo:'Apollo (confident)',arcas:'Arcas (natural)',orion:'Orion (approachable)'};
+const player = new Audio(); let playerUnlocked = false, playToken = 0, finishPlay = null;
+const naturalVoice = () => Boolean(config?.features?.speech);
+const chosenVoice = () => { const saved = localStorage.getItem('sciapp-voice'); return config?.features?.voices?.includes(saved) ? saved : config?.features?.defaultVoice; };
+// Phones only allow sound that starts from a tap or key press; the first one readies the player for later replies.
+function unlockAudio() { if (playerUnlocked || !player.paused) return; playerUnlocked = true; player.src = SILENT_AUDIO; player.play().catch(() => { playerUnlocked = false; }); }
+document.addEventListener('pointerdown',unlockAudio,{capture:true,passive:true}); document.addEventListener('keydown',unlockAudio,{capture:true});
+function stopPlayer() { playToken++; try { player.pause(); } catch {} const finish = finishPlay; finishPlay = null; finish?.(); }
+function silence() { speechGeneration++; window.speechSynthesis?.cancel(); stopPlayer(); assistantSpeaking = false; }
+async function speechAudio(text, current) {
+ const headers = new Headers({'Content-Type':'application/json'}); const token = await window.Clerk?.session?.getToken(); if (token) headers.set('Authorization',`Bearer ${token}`);
+ const response = await fetch('/api/speech',{method:'POST',credentials:'same-origin',headers,body:JSON.stringify({text,voice:chosenVoice()})});
+ if (!response.ok) throw new Error('Voice unavailable.');
+ const blob = await response.blob(); if (!current()) return null; return URL.createObjectURL(blob);
 }
-function setMute(value, persist = true) { muted = value; if (persist) localStorage.setItem('sciapp-muted',String(value)); if (value) { speechGeneration++; window.speechSynthesis?.cancel(); assistantSpeaking = false; resumeHandsFree(); } ui.mute.setAttribute('aria-pressed',String(value)); ui.mute.setAttribute('aria-label',value ? 'Turn on spoken replies' : 'Mute spoken replies'); ui['mute-label'].textContent = value ? 'Sound off' : 'Sound on'; ui['mute-icon'].textContent = value ? '◌' : '◖'; }
+function playAudio(url) {
+ const token = ++playToken;
+ return new Promise((resolve,reject) => {
+  finishPlay = resolve; const mine = () => token === playToken;
+  player.onended = () => { if (mine()) resolve(); }; player.onpause = () => { if (mine() && !player.ended) resolve(); }; player.onerror = () => { if (mine()) reject(new Error('Audio failed.')); };
+  player.src = url; player.play().catch(e => { if (mine()) reject(e); });
+ }).finally(() => { if (token === playToken) finishPlay = null; URL.revokeObjectURL(url); });
+}
+function browserSpeak(text, done) {
+ if (!text || !('speechSynthesis' in window)) { done(); return; }
+ const utterance = new SpeechSynthesisUtterance(text); utterance.rate = .95; utterance.onend = done; utterance.onerror = done; speechSynthesis.speak(utterance);
+}
+async function speak(text, force = false) {
+ if (((muted || new Date(state?.settings?.quietUntil || 0).getTime() > Date.now()) && !force) || !text || !(naturalVoice() || 'speechSynthesis' in window)) { assistantSpeaking = false; resumeHandsFree(); return; }
+ stopHandsFree(); silence(); const speechId = speechGeneration; assistantSpeaking = true;
+ const generation = accountGeneration; const current = () => generation === accountGeneration && speechId === speechGeneration;
+ const done = () => { if (current()) { assistantSpeaking = false; resumeHandsFree(); } };
+ const chunks = speechChunks(text); let index = 0;
+ if (naturalVoice()) {
+  try {
+   let next = speechAudio(chunks[0],current);
+   for (; index < chunks.length; index++) {
+    const url = await next; if (!url || !current()) { next = null; return; }
+    next = index + 1 < chunks.length ? speechAudio(chunks[index + 1],current) : null; next?.catch(() => {});
+    await playAudio(url); if (!current()) { next?.then(u => u && URL.revokeObjectURL(u)).catch(() => {}); return; }
+   }
+   done(); return;
+  } catch { if (!current()) return; }
+ }
+ browserSpeak(chunks.slice(index).join(' '),done);
+}
+const SILENT_AUDIO = 'data:audio/wav;base64,UklGRrQBAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YZABAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICA';
+function setMute(value, persist = true) { muted = value; if (persist) localStorage.setItem('sciapp-muted',String(value)); if (value) { silence(); resumeHandsFree(); } ui.mute.setAttribute('aria-pressed',String(value)); ui.mute.setAttribute('aria-label',value ? 'Turn on spoken replies' : 'Mute spoken replies'); ui['mute-label'].textContent = value ? 'Sound off' : 'Sound on'; ui['mute-icon'].textContent = value ? '◌' : '◖'; }
 function switchPage(page, {latest = false} = {}) {
  const previous = activePage;
  if (previous === 'Conversation' && page !== previous) chatScroll.save();
@@ -334,6 +377,7 @@ function renderPanel() {
   if (!window.Clerk?.session) notifications.append(node('p','','Sign in to enable notifications for your personal account.'));
   notifications.append(notifyActions); panel.append(notifications);
   const sound = node('section','data-card setting-row'); const text = node('div'); text.append(node('h2','','Spoken replies'),node('p','',muted ? 'Off. Replies stay on screen.' : 'On. New replies are read aloud.')); sound.append(text,button(muted ? 'Turn on' : 'Mute','secondary',() => {setMute(!muted); renderPanel();})); panel.append(sound);
+  if (naturalVoice() && config.features.voices?.length) { const voiceCard = node('section','data-card voice-choice'); const label = node('label','','Voice for spoken replies'); label.htmlFor = 'reply-voice'; const select = document.createElement('select'); select.id = 'reply-voice'; for (const id of config.features.voices) { const option = document.createElement('option'); option.value = id; option.textContent = VOICE_NAMES[id] || id; select.append(option); } select.value = chosenVoice(); const sample = () => speak('Hello. This is how I will read replies to you.',true); select.addEventListener('change',() => { localStorage.setItem('sciapp-voice',select.value); sample(); }); voiceCard.append(node('h2','','Voice'),label,select,button('Play a sample','secondary',sample)); panel.append(voiceCard); }
   const hands = node('section','data-card'); hands.append(node('h2','','Foreground hands-free'),node('p','',state.settings?.handsFree ? 'Enabled while this page is open. Your microphone status is shown below. Speech is sent after your chosen pause.' : 'Optional browser voice conversation while this page is open. No background listening.'),chatButton(state.settings?.handsFree ? 'Turn hands-free off' : 'Turn hands-free on',state.settings?.handsFree ? 'Turn hands-free off' : 'Turn hands-free on')); if(state.settings?.handsFree) hands.append(button(handsFreePaused ? 'Resume listening' : 'Pause listening','secondary',() => {toggleHandsFreePause();})); panel.append(hands);
   const access = node('section','data-card'); access.append(node('h2','','Comfort and access'),node('p','','Change text size, quiet hours, and other preferences through the conversation.'),chatButton('Set my preferences','Settings')); panel.append(access);
   const caregivers = node('section','data-card'); caregivers.append(node('h2','','Your support circle'),node('p','',`${state.caregivers?.length || 0} invitation draft${state.caregivers?.length === 1 ? '' : 's'}. No access granted yet.`),chatButton('Invite a caregiver','I want to add a caretaker to help me follow up on my activities')); panel.append(caregivers);
@@ -392,7 +436,7 @@ async function toggleVoice() {
  if (state?.settings?.handsFree) { toggleHandsFreePause(); return; }
  if (busy || uploadBusy) return;
  if (recording) { recorder ? recorder.stop() : recognition?.stop(); return; }
- error(); stopHandsFree(); manualVoiceActive = true; window.speechSynthesis?.cancel(); assistantSpeaking = false;
+ error(); stopHandsFree(); manualVoiceActive = true; silence(); assistantSpeaking = false;
  if (config?.features?.transcription === false) { browserVoice(); return; }
  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { browserVoice(); return; }
  const generation = accountGeneration; const voiceId = ++voiceGeneration; const draft = ui.message.value;
@@ -485,9 +529,9 @@ ui.account.addEventListener('click',async () => {
   try { await api('/api/session',{method:'DELETE'}); await window.sciappSignOut(); showWelcomeAfterSignOut(); } catch(e) {error(e.message);}
  } else if (config?.clerkPublishableKey) await window.sciappSignIn();
 });
-function clearAccountWork() {visibleMessages = MESSAGE_PAGE; clearFigureCache(); lastNotificationDiagnostic=''; journalUI.reset();medicationCheckInUI.reset(); closePhotoOptions(); chatScroll.reset(); notificationBusy = false; pushServerStatus = null; pushStatus = {supported:false,enabled:false,permission:'unknown'}; accountGeneration++; voiceGeneration++; pendingRequests.forEach(controller => controller.abort()); pendingRequests.clear(); clearTimeout(approvalTimer); stopHandsFree(); handsFreePaused = false; if(recognition) {recognition.onend = null; recognition.abort(); recognition = null;} if(recorder?.state === 'recording') recorder.stop(); recorder = null; audioChunks = []; recordStream?.getTracks().forEach(track => track.stop()); resetRecording(); assistantSpeaking = false; window.speechSynthesis?.cancel(); uploadBusy = false; setBusy(false); revokeHistoricalPhotos(); removePhoto({deleteRemote:false}); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; ui.announcer.textContent = ''; ui.app.hidden = true; ui.welcome.hidden = false; switchPage('Conversation'); }
+function clearAccountWork() {visibleMessages = MESSAGE_PAGE; clearFigureCache(); lastNotificationDiagnostic=''; journalUI.reset();medicationCheckInUI.reset(); closePhotoOptions(); chatScroll.reset(); notificationBusy = false; pushServerStatus = null; pushStatus = {supported:false,enabled:false,permission:'unknown'}; accountGeneration++; voiceGeneration++; pendingRequests.forEach(controller => controller.abort()); pendingRequests.clear(); clearTimeout(approvalTimer); stopHandsFree(); handsFreePaused = false; if(recognition) {recognition.onend = null; recognition.abort(); recognition = null;} if(recorder?.state === 'recording') recorder.stop(); recorder = null; audioChunks = []; recordStream?.getTracks().forEach(track => track.stop()); resetRecording(); assistantSpeaking = false; silence(); uploadBusy = false; setBusy(false); revokeHistoricalPhotos(); removePhoto({deleteRemote:false}); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; ui.announcer.textContent = ''; ui.app.hidden = true; ui.welcome.hidden = false; switchPage('Conversation'); }
 function showWelcomeAfterSignOut() {
- clearAccountWork(); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; window.speechSynthesis?.cancel(); ui.app.hidden = true; ui.welcome.hidden = false; ui.account.hidden = true;
+ clearAccountWork(); state = null; ui.messages.replaceChildren(); ui.panel.replaceChildren(); ui.message.value = ''; silence(); ui.app.hidden = true; ui.welcome.hidden = false; ui.account.hidden = true;
 }
 window.sciappBeforeSignOut = () => disableNotifications(api);
 window.sciappBeforeAuthChange = () => detachBrowserNotifications();
@@ -499,7 +543,7 @@ setMute(muted,false); ui['date-label'].textContent = new Date().toLocaleDateStri
 try { config = await api('/api/config'); if (config.clerkPublishableKey) { ui['sign-in'].hidden = false; window.dispatchEvent(new CustomEvent('sciapp:auth-config',{detail:config})); } try { showApp(await api('/api/state')); } catch(e) { if (e.status !== 401) ui['welcome-error'].textContent = e.message; ui.welcome.hidden = false; } }
 catch(e) { ui.welcome.hidden = false; ui['welcome-error'].textContent = `Could not connect to sciapp. ${e.message}`; }
 window.addEventListener('sciapp:signed-in',async () => { clearAccountWork(); ui.account.hidden = false; ui.account.textContent = 'Sign out'; try { showApp(await api('/api/state')); } catch(e) { ui['welcome-error'].textContent = e.message; } });
-window.addEventListener('pagehide',() => { stopHandsFree(); revokeHistoricalPhotos(); recordStream?.getTracks().forEach(track => track.stop()); window.speechSynthesis?.cancel(); });
+window.addEventListener('pagehide',() => { stopHandsFree(); revokeHistoricalPhotos(); recordStream?.getTracks().forEach(track => track.stop()); silence(); });
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message',event=>{if(event.data?.type==='sciapp:open-today' && state){switchPage('Today');api('/api/state').then(update).catch(e=>error(e.message));}});
 

@@ -1,4 +1,5 @@
 import {appHelp,completeOnboarding} from './onboarding.js';
+import {speechRequest,synthesize,VOICES,DEFAULT_VOICE} from './speech.js';
 import {snoozeCareCheckIn,dismissReminders} from './care-checkin.js';
 import {savePushDiagnostic} from './push-diagnostics.js';
 import {extractPhotoCaptureTime,resolvePhotoCaptureTime} from './photo-metadata.js';
@@ -95,8 +96,8 @@ export default {
       if (!configuredOrigins(env,url.origin).includes(url.origin))return json({error:'This hostname is not configured for SCIapp.'},421);
       const canonical=canonicalHome(request,env);
       if(canonical)return new Response(null,{status:302,headers:{...security,Location:canonical}});
-      if (path === '/api/health') {const {settings}=await aiConfiguration(env);return json({ status:'ok',version:'0.11.11',chatModel:settings.provider==='openai'?settings.chatModel:CHAT_MODEL,visionModel:settings.provider==='openai'?settings.visionModel:VISION_MODEL,provider:settings.provider,mode:'personal-beta' });}
-      if (path === '/api/config' && request.method === 'GET') return json({ appOrigin:env.APP_ORIGIN||url.origin, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null, authEnvironment: env.CLERK_PUBLISHABLE_KEY?.startsWith('pk_live_') ? 'production' : 'development', pushPublicKey:env.VAPID_PUBLIC_KEY||null, mode: env.CLERK_PUBLISHABLE_KEY ? 'authenticated' : 'preview', features: { notifications: !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY),notificationDiagnostics:true, memory:retrievalReady(env), resources:retrievalReady(env), medications:true, photos: true, transcription: !!env.AI, speech: false, caregivers: 'drafts', healthSystems:!!env.HEALTH_TOKEN_KEY, healthConnect: false }, notice: 'Personal care beta. Medication and allergy records are user-entered. Notifications are reminders, not guaranteed clinical alarms. Caregiver invitations remain drafts.' });
+      if (path === '/api/health') {const {settings}=await aiConfiguration(env);return json({ status:'ok',version:'0.11.12',chatModel:settings.provider==='openai'?settings.chatModel:CHAT_MODEL,visionModel:settings.provider==='openai'?settings.visionModel:VISION_MODEL,provider:settings.provider,mode:'personal-beta' });}
+      if (path === '/api/config' && request.method === 'GET') return json({ appOrigin:env.APP_ORIGIN||url.origin, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null, authEnvironment: env.CLERK_PUBLISHABLE_KEY?.startsWith('pk_live_') ? 'production' : 'development', pushPublicKey:env.VAPID_PUBLIC_KEY||null, mode: env.CLERK_PUBLISHABLE_KEY ? 'authenticated' : 'preview', features: { notifications: !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY),notificationDiagnostics:true, memory:retrievalReady(env), resources:retrievalReady(env), medications:true, photos: true, transcription: !!env.AI, speech: !!env.AI, voices:VOICES, defaultVoice:DEFAULT_VOICE, caregivers: 'drafts', healthSystems:!!env.HEALTH_TOKEN_KEY, healthConnect: false }, notice: 'Personal care beta. Medication and allergy records are user-entered. Notifications are reminders, not guaranteed clinical alarms. Caregiver invitations remain drafts.' });
       if (!path.startsWith('/api/')) {
         if (!['GET','HEAD'].includes(request.method)) return json({ error: 'Method not allowed.' },405);
         const asset = assets[({ '/':'/index.html', '/privacy':'/privacy.html', '/terms':'/terms.html', '/admin':'/admin.html', '/admin/':'/admin.html' })[path] || path];
@@ -116,7 +117,7 @@ export default {
         await env.DB.prepare('INSERT INTO sessions(token_hash,account_id,expires_at) VALUES (?,?,?)').bind(await hash(token),id,Date.now()+7*86400000).run();
         return json({ state: publicState((await load(env,id)).state) },200,{ 'Set-Cookie': `__Host-sciapp=${token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=604800` });
       }
-      if(path.startsWith('/api/admin/'))return await adminRoute(request,env,ctx,{json,bodyJSON:r=>bodyJSON(r,4200000),form,version:'0.11.11'});
+      if(path.startsWith('/api/admin/'))return await adminRoute(request,env,ctx,{json,bodyJSON:r=>bodyJSON(r,4200000),form,version:'0.11.12'});
       if(path==='/api/health-systems/callback'&&request.method==='GET'){
         if(!env.HEALTH_TOKEN_KEY)throw new AppError('Health connections are not configured.',503);
         const result=await completeConnection(env,request);return new Response(null,{status:303,headers:{...security,Location:env.APP_ORIGIN+'/?health='+(result.cancelled?'cancelled':'connected'),'Set-Cookie':result.cookie}});
@@ -216,6 +217,12 @@ export default {
         const {state,version}=await load(env,id);attachmentOwner(state,photo[1]);
         if(request.method==='GET'){const object=await env.PHOTOS.get(`${id}/${photo[1]}`);if(!object)throw new AppError('Photo not found.',404);return new Response(object.body,{headers:{...security,'Content-Type':object.httpMetadata.contentType,'Content-Disposition':'inline'}});}
         if(request.method==='DELETE'){if(state.careObservation?.photoId===photo[1])delete state.careObservation;for(const review of state.proposals)if(review.status==='pending'&&review.params.photoId===photo[1]){review.status='cancelled';for(const m of state.messages)if(m.proposal?.id===review.id)m.proposal.status='cancelled';}state.photos=state.photos.filter(p=>p.id!==photo[1]);await store(env,id,state,version);await env.PHOTOS.delete(`${id}/${photo[1]}`);return json({ok:true});}
+      }
+      if(path==='/api/speech'&&request.method==='POST'){
+        if(!env.AI)throw new AppError('The natural voice is not connected.',503);
+        await limit(request,env,'speech',300);
+        const audio=await synthesize(env,speechRequest(await bodyJSON(request,8000)));
+        return new Response(audio,{headers:{...security,'Content-Type':'audio/mpeg'}});
       }
       if(path==='/api/transcribe'&&request.method==='POST'){
         if(!env.AI)throw new AppError('Transcription is not connected. Please type your message.',503);
