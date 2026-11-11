@@ -64,3 +64,7 @@ Text extraction does not carry images, so figures are captured separately. After
 `GET /api/resources/figures/:id` serves a figure to app users only while a resource that uses the upload is published; `GET /api/admin/figures/:id` serves it to the administrator. Discarding an unused upload deletes its figures.
 
 In chat, `figuresForReply` runs when an answer has shared sources and is not a care review. It scores the figures of the retrieved documents: named in the answer or question, caption words shared with the question, or referred to by a retrieved passage. At most two are attached, never two images of the same page. The app shows the page image with its caption, source title and page number, reserves its space before it loads, and fetches each image once.
+
+## Nothing to do by hand for documents (0.11.14)
+
+Choosing a file, or Use this upload on an earlier upload, reads the text and finds the figures without further action. If the stored upload has no text (for example a book uploaded before the 1,500,000 character limit), the page asks the server to read the saved original again. The text box is collapsed under a line stating how many characters were read; open it only to review or edit. The Check if the transcript is ready button and the What the text below is selector are shown only for audio and video, where a person may supply a summary instead of the AI transcript.

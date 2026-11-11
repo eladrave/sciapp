@@ -46,7 +46,8 @@ test('journal lookups accept a local clock window',()=>{
  const q=journalQuery(state(),{category:'catheter',relativeDate:'today',startClock:'07:00',limit:50},at);
  assert.ok(q.entries.every(e=>Date.parse(e.occurredAt)>=Date.parse('2026-11-10T12:00:00Z')));assert.ok(!q.entries.some(e=>e.id==='a'));assert.equal(q.filters.startClock,'07:00');
 });
-test('a urine amount question is answered in words without journal cards or saved changes',async()=>{
+test('a urine amount question is answered in words without journal cards or saved changes',async t=>{
+ t.mock.timers.enable({apis:['Date'],now:at});// the tool reads the clock itself
  const s=state(),before=JSON.stringify(s.events);
  assert.ok(agentCareTools.some(t=>t.name==='urine_output_total'));
  const r=await structuredCareTool(s,'How many ml of urine I had so far since 7am?',{name:'urine_output_total',arguments:{relativeDate:'today',startClock:'07:00'}},{});

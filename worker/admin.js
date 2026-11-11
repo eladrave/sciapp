@@ -2,7 +2,7 @@ import { aiDefaults, aiConfiguration, prepareAISettings, discoverModels } from '
 import { configureClient, clientStatus } from './health-systems.js';
 import { refreshDirectory } from './health-providers.js';
 import { processTranscriptions } from './resource-transcription.js';
-import { uploadResource, materialInput, resourceDownload, MAX_FILE_BYTES } from './resource-files.js';
+import { uploadResource, materialInput, resourceDownload, reextractUpload, MAX_FILE_BYTES } from './resource-files.js';
 import { saveFigure, listFigures, deleteFigures, figureDownload, MAX_FIGURE_BYTES } from './resource-figures.js';
 import { AppError, now, uid } from './domain.js';
 import { processIndexJobs, chunkInsertStatements } from './retrieval.js';
@@ -72,6 +72,8 @@ export async function adminRoute(request,env,ctx,{json,bodyJSON,form,version}){
  if(path==='/api/admin/uploads'&&request.method==='GET')return json({uploads:(await env.DB.prepare('SELECT id,file_name,mime_type,extraction_status,extraction_note,created_at FROM resource_uploads WHERE NOT EXISTS(SELECT 1 FROM resource_materials WHERE upload_id=resource_uploads.id) ORDER BY created_at DESC LIMIT 50').all()).results});
  const uploadStatus=path.match(/^\/api\/admin\/uploads\/(u-[a-f0-9-]+)\/status$/);
  if(uploadStatus&&request.method==='GET'){const row=await env.DB.prepare('SELECT id,file_name,mime_type,extraction_status,extracted_text,extraction_note FROM resource_uploads WHERE id=?').bind(uploadStatus[1]).first();if(!row)throw new AppError('Upload not found.',404);return json(row);}
+ const reextract=path.match(/^\/api\/admin\/uploads\/(u-[a-f0-9-]+)\/extract$/);
+ if(reextract&&request.method==='POST'){const row=await reextractUpload(env,reextract[1]);await audit(env,'resource_upload_reextract',reextract[1]).run();return json(row);}
  const figures=path.match(/^\/api\/admin\/uploads\/(u-[a-f0-9-]+)\/figures$/);
  if(figures&&request.method==='GET')return json({figures:await listFigures(env,figures[1])});
  if(figures&&request.method==='POST'){const result=await saveFigure(env,figures[1],await form(request,MAX_FIGURE_BYTES+16384));return json(result,201);}

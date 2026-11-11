@@ -20,8 +20,8 @@ test('a bag photo taken up to three hours after a scheduled catheterization coun
  assert.equal(catheterScheduleMatch(s,'2026-11-09T18:00:00Z',at),null);
  s.settings.catheterRemindersEnabled=false;assert.equal(catheterScheduleMatch(s,'2026-11-09T12:05:00Z',at),null);
 });
-test('an approved bag photo from 9:40 stops the 7:00 check-in, and only that occurrence',()=>{
- const s=state(),at=Date.parse('2026-11-09T14:45:00Z');assert.equal(openSeven(s,at),true);
+test('an approved bag photo from 9:40 stops the 7:00 check-in, and only that occurrence',t=>{
+ const s=state(),at=Date.parse('2026-11-09T14:45:00Z');t.mock.timers.enable({apis:['Date'],now:at});// the review reads the clock itselfassert.equal(openSeven(s,at),true);
  const reply=scheduledBagPhotoReview(s,'Help me record this photo.',{type:'bag',volumeMl:380,captureTime:capture('2026-11-09T09:40:00')},'bag-photo',at);
  assert.equal(reply.proposal.kind,'catheterization');assert.equal(reply.proposal.editablePhotoCare,true);
  assert.match(reply.content,/380 mL/);assert.match(reply.content,/7:00 AM scheduled catheterization/);assert.match(reply.content,/9:40 AM/);

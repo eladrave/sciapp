@@ -28,6 +28,14 @@ test('original files are private until a linked resource is published, then inac
  await DB.prepare("UPDATE resource_publication SET status='archived' WHERE source_id='r-test'").run();await assert.rejects(resourceDownload(env,upload.id),e=>e.status===404);
  const video=await materialInput(env,{kind:'video',url:'https://www.youtube.com/watch?v=synthetic',title:'An exercise demonstration',text:'This is a curator-supplied summary, not an automatically watched video.',textKind:'summary'});assert.equal(video.kind,'video');await assert.rejects(materialInput(env,{kind:'video',url:'javascript:alert(1)',title:'Bad',text:original}),e=>e.status===400);
  await assert.rejects(uploadResource(env,new File([new Uint8Array(10*1024*1024+1)],'large.txt')),e=>e.status===413);
+ // An upload stored without text (as a large book was under the earlier limit) is read again from the saved original.
+ const {reextractUpload}=await import('../worker/resource-files.js');
+ const stale=await uploadResource(env,new File(['Synthetic guide text that is certainly long enough to be extracted from the saved original file.'],'stale.txt'));
+ await DB.prepare("UPDATE resource_uploads SET extraction_status='needs_text',extracted_text='',extraction_note='Extracted text exceeds 120,000 characters' WHERE id=?").bind(stale.id).run();
+ const again=await reextractUpload(env,stale.id);assert.equal(again.extraction_status,'extracted');assert.match(again.extracted_text,/^Synthetic guide text/);assert.equal(again.r2_key,undefined);
+ assert.equal((await DB.prepare('SELECT extraction_status FROM resource_uploads WHERE id=?').bind(stale.id).first()).extraction_status,'extracted');
+ assert.equal((await reextractUpload(env,stale.id)).extracted_text,again.extracted_text);
+ await assert.rejects(reextractUpload(env,'u-missing'),e=>e.status===404);
  }finally{await mf.dispose();}
 });
 

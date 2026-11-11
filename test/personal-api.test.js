@@ -17,6 +17,9 @@ test('personal API persists reviewed medicines separately, logs doses once and c
   const req=async(path,method='GET',data,label='a')=>mf.dispatchFetch('https://sciapp.test'+path,{method,headers:{cookie:`__Host-sciapp=${label}`,...(data?{'content-type':'application/json'}:{})},...(data?{body:JSON.stringify(data)}:{})});
   const chat=async text=>{const r=await req('/api/chat','POST',{message:text});const body=await r.json();assert.equal(r.status,200,JSON.stringify(body));return body;};
   const approve=async result=>{const r=await req(`/api/actions/${result.reply.proposal.id}`,'POST',{decision:'approve'});const body=await r.json();assert.equal(r.status,200,JSON.stringify(body));return body;};
+  // This account asks before saving, which keeps the review flow below; the default saves at once (checked at the end).
+  assert.equal((await req('/api/preferences','POST',{askBeforeSaving:'yes'})).status,400);
+  assert.equal((await(await req('/api/preferences','POST',{askBeforeSaving:true})).json()).state.settings.askBeforeSaving,true);
   let state=await(await req('/api/state')).json();assert.equal(state.mode,'personal');assert.equal(state.inventory[0].count,null);assert.equal(state.medications.length,0);
   const imported=await chat('Current Medications\n• Sample Alpha 2 mg, twice daily\n• Sample Beta 5 mg, at bedtime as needed\nAllergies\n• Sample allergen');assert.equal(imported.state.medications.length,0);
   state=(await approve(imported)).state;assert.equal(state.medications.length,2);assert.deepEqual(state.allergies,['Sample allergen']);
@@ -39,5 +42,14 @@ test('personal API persists reviewed medicines separately, logs doses once and c
   state=await(await req('/api/state')).json();assert.equal(state.settings.catheterRemindersEnabled,true);assert.ok(state.reminderTasks.some(t=>t.kind==='catheterization'));
   assert.equal((await req('/api/push/subscriptions','POST',{subscription:{endpoint:'https://evil.test'}})).status,503);
   assert.equal((await req('/api/account/export')).status,200);
+  // Saving without asking: the record and stock change at once, and one Undo call reverses both.
+  await req('/api/preferences','POST',{askBeforeSaving:false});
+  const saved=await chat('I catheterized 300 mL');
+  assert.equal(saved.reply.proposal.status,'approved');assert.equal(saved.reply.proposal.autoSaved,true);assert.equal(saved.reply.proposal.undoable,true);
+  assert.equal(saved.state.inventory[0].count,98);assert.match(saved.reply.content,/^Saved\..*Choose Undo if this is wrong\.$/);
+  assert.equal(saved.state.messages.at(-1).proposal.autoSaved,true);
+  const undone=await(await req(`/api/actions/${saved.reply.proposal.id}/undo`,'POST',{})).json();
+  assert.equal(undone.state.inventory[0].count,99);assert.equal(undone.state.messages.find(m=>m.proposal?.id===saved.reply.proposal.id).proposal.undone,true);
+  assert.equal((await req(`/api/actions/${saved.reply.proposal.id}/undo`,'POST',{},'b')).status,404);
  }finally{await mf.dispose();}
 });

@@ -42,3 +42,35 @@ test('uploading a PDF finds captioned figures and saves an image of each figure 
  await expect(page.locator('#resource-text')).toHaveValue(/Synthetic extracted text/);
  await expect(page.locator('#error')).toBeHidden();
 });
+
+test('an earlier upload without text is read again and its figures found, with nothing to do by hand',async({page})=>{
+ const id='u-00000000-0000-0000-0000-000000000002';let extracted=0,posted=0;
+ const text='Synthetic extracted book text that is long enough to be saved as a searchable resource.';
+ await page.route('**/api/admin/**',async route=>{
+  const url=new URL(route.request().url()),path=url.pathname.replace('/api/admin/',''),method=route.request().method();
+  if(path==='session')return route.fulfill({json:{username:'admin',csrfToken:'synthetic'}});
+  if(path==='overview')return route.fulfill({json:{queue:[],appVersion:'test',settings:{retrievalThreshold:0.65,resourceReviewDays:180},settingsVersion:0,resources:{},accounts:0}});
+  if(path==='resources')return route.fulfill({json:{resources:[]}});
+  if(path==='audit')return route.fulfill({json:{entries:[]}});
+  if(path==='ai')return route.fulfill({json:{version:0,keyConfigured:false,settings:{baseUrl:'',apiFormat:'',provider:'',chatModel:'',visionModel:'',chatReasoning:'',visionReasoning:'',maxOutputTokens:1000}}});
+  if(path==='uploads'&&method==='GET')return route.fulfill({json:{uploads:[{id,file_name:'book.pdf',mime_type:'application/pdf',extraction_status:'needs_text',extraction_note:'Extracted text exceeds 120,000 characters',created_at:new Date().toISOString()}]}});
+  if(path===`uploads/${id}/status`)return route.fulfill({json:{id,file_name:'book.pdf',mime_type:'application/pdf',extraction_status:'needs_text',extracted_text:'',extraction_note:'Extracted text exceeds 120,000 characters'}});
+  if(path===`uploads/${id}/extract`&&method==='POST'){extracted++;return route.fulfill({json:{id,file_name:'book.pdf',mime_type:'application/pdf',extraction_status:'extracted',extracted_text:text,extraction_note:'Extracted from the whole document.'}});}
+  if(path===`uploads/${id}/figures`){if(method==='POST'){posted++;return route.fulfill({status:201,json:{id:'f-1'}});}if(method==='DELETE')return route.fulfill({json:{removed:0}});return route.fulfill({json:{figures:[]}});}
+  if(path===`uploads/${id}`&&method==='GET')return route.fulfill({contentType:'application/pdf',body:syntheticPdf()});
+  return route.fulfill({status:404,json:{error:'Unexpected '+method+' '+path}});
+ });
+ await page.goto('/admin');
+ await page.getByRole('button',{name:'Resources',exact:true}).click();
+ await page.getByRole('button',{name:'Use this upload'}).click();
+ await expect(page.locator('#figure-state')).toHaveText(/1 figure saved from this PDF/,{timeout:30000});
+ expect(extracted).toBe(1);expect(posted).toBe(1);
+ await expect(page.locator('#resource-text')).toHaveValue(text);
+ await expect(page.locator('#text-summary')).toHaveText(/Text read from the file automatically \(\d+ characters\)\. Nothing to type\./);
+ expect(await page.locator('#text-details').evaluate(el=>el.open)).toBe(false);
+ await expect(page.locator('#text-kind-field')).toBeHidden();await expect(page.locator('#check-transcript')).toBeHidden();
+ await expect(page.getByRole('button',{name:/Find figures/})).toHaveCount(0);
+ expect(await page.locator('#text-kind').inputValue()).toBe('extracted');
+ expect(await page.locator('#resource-form').evaluate(form=>form.checkValidity())).toBe(true);
+ await expect(page.locator('#error')).toBeHidden();
+});

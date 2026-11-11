@@ -1,4 +1,5 @@
 import {appHelp,completeOnboarding} from './onboarding.js';
+import {autoSave,undoSaved,correctSaved} from './auto-save.js';
 import {speechRequest,synthesize,VOICES,DEFAULT_VOICE} from './speech.js';
 import {snoozeCareCheckIn,dismissReminders} from './care-checkin.js';
 import {savePushDiagnostic} from './push-diagnostics.js';
@@ -96,7 +97,7 @@ export default {
       if (!configuredOrigins(env,url.origin).includes(url.origin))return json({error:'This hostname is not configured for SCIapp.'},421);
       const canonical=canonicalHome(request,env);
       if(canonical)return new Response(null,{status:302,headers:{...security,Location:canonical}});
-      if (path === '/api/health') {const {settings}=await aiConfiguration(env);return json({ status:'ok',version:'0.11.13',chatModel:settings.provider==='openai'?settings.chatModel:CHAT_MODEL,visionModel:settings.provider==='openai'?settings.visionModel:VISION_MODEL,provider:settings.provider,mode:'personal-beta' });}
+      if (path === '/api/health') {const {settings}=await aiConfiguration(env);return json({ status:'ok',version:'0.11.14',chatModel:settings.provider==='openai'?settings.chatModel:CHAT_MODEL,visionModel:settings.provider==='openai'?settings.visionModel:VISION_MODEL,provider:settings.provider,mode:'personal-beta' });}
       if (path === '/api/config' && request.method === 'GET') return json({ appOrigin:env.APP_ORIGIN||url.origin, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null, authEnvironment: env.CLERK_PUBLISHABLE_KEY?.startsWith('pk_live_') ? 'production' : 'development', pushPublicKey:env.VAPID_PUBLIC_KEY||null, mode: env.CLERK_PUBLISHABLE_KEY ? 'authenticated' : 'preview', features: { notifications: !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY),notificationDiagnostics:true, memory:retrievalReady(env), resources:retrievalReady(env), medications:true, photos: true, transcription: !!env.AI, speech: !!env.AI, voices:VOICES, defaultVoice:DEFAULT_VOICE, caregivers: 'drafts', healthSystems:!!env.HEALTH_TOKEN_KEY, healthConnect: false }, notice: 'Personal care beta. Medication and allergy records are user-entered. Notifications are reminders, not guaranteed clinical alarms. Caregiver invitations remain drafts.' });
       if (!path.startsWith('/api/')) {
         if (!['GET','HEAD'].includes(request.method)) return json({ error: 'Method not allowed.' },405);
@@ -117,7 +118,7 @@ export default {
         await env.DB.prepare('INSERT INTO sessions(token_hash,account_id,expires_at) VALUES (?,?,?)').bind(await hash(token),id,Date.now()+7*86400000).run();
         return json({ state: publicState((await load(env,id)).state) },200,{ 'Set-Cookie': `__Host-sciapp=${token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=604800` });
       }
-      if(path.startsWith('/api/admin/'))return await adminRoute(request,env,ctx,{json,bodyJSON:r=>bodyJSON(r,4200000),form,version:'0.11.13'});
+      if(path.startsWith('/api/admin/'))return await adminRoute(request,env,ctx,{json,bodyJSON:r=>bodyJSON(r,4200000),form,version:'0.11.14'});
       if(path==='/api/health-systems/callback'&&request.method==='GET'){
         if(!env.HEALTH_TOKEN_KEY)throw new AppError('Health connections are not configured.',503);
         const result=await completeConnection(env,request);return new Response(null,{status:303,headers:{...security,Location:env.APP_ORIGIN+'/?health='+(result.cancelled?'cancelled':'connected'),'Set-Cookie':result.cookie}});
@@ -167,6 +168,9 @@ export default {
       if(path==='/api/account/export'&&request.method==='GET')return json({...publicState((await load(env,id)).state),...(env.HEALTH_TOKEN_KEY&&id.startsWith('clerk:')?{healthConnections:await listConnections(env,id),importedHealthRecords:await listRecords(env,id)}:{}),...(retrievalReady(env)&&id.startsWith('clerk:')?{personalMemory:await listMemory(env,id,true)}:{})},200,{'Content-Disposition':'attachment; filename="sciapp-records.json"'});
       const action = path.match(/^\/api\/actions\/([a-f0-9-]+)$/);
       if (action && request.method === 'POST') { const data=await bodyJSON(request); return json(await mutate(env,id,s=>finishProposal(s,action[1],data.decision))); }
+      const savedUndo = path.match(/^\/api\/actions\/([a-f0-9-]+)\/undo$/);
+      if (savedUndo && request.method === 'POST') return json(await mutate(env,id,s=>undoSaved(s,savedUndo[1])));
+      if (path==='/api/preferences'&&request.method==='POST'){const data=await bodyJSON(request);if(typeof data.askBeforeSaving!=='boolean')throw new AppError('Choose whether to ask before saving.');return json(await mutate(env,id,s=>{s.settings.askBeforeSaving=data.askBeforeSaving;return message('assistant',data.askBeforeSaving?'I will ask you to approve each change before saving it.':'I will save what you tell me right away. You can undo a record from its card.');}));}
       const undo = path.match(/^\/api\/events\/([a-f0-9-]+)\/undo$/);
       if (undo && request.method === 'POST') return json(await mutate(env,id,s=>undoEvent(s,undo[1])));
       if (path === '/api/chat' && request.method === 'POST') {
@@ -182,7 +186,7 @@ export default {
         if(photoData?.type==='bag'){const timing=bagPhotoTiming(state,photoData);if(timing)photoData={...photoData,scheduleMatch:{scheduledClock:timing.match.clock,scheduledFor:timing.match.dueAt,photoTime:timing.time,note:timing.assumption}};}
         const userMessage=message('user',text||'Photo attached',data.photoId?{photoId:data.photoId,photoUrl:`/api/photos/${data.photoId}`}:{ });
         state.messages.push(userMessage);
-        let reply=data.photoId?scheduledBagPhotoReview(state,text,photoData,data.photoId):null;
+        let reply=data.photoId?scheduledBagPhotoReview(state,text,photoData,data.photoId):correctSaved(state,text);
         if(reply){}
         else if(env.AI||env.OPENAI_API_KEY){
           await limit(request,env,'ai',150);
@@ -193,6 +197,7 @@ export default {
           }catch(error){if(error instanceof AppError){reply=message('assistant',error.message,{options:['Set catheter reminders','Log catheterization']});}else{console.warn(JSON.stringify({event:'conversation_model_unavailable'}));reply=offlineCareReply(state,text,photoData,data.photoId);reply.content='I am using limited offline controls because the AI request did not complete. '+reply.content;}}
         }else reply=offlineCareReply(state,text,photoData,data.photoId);
         if(reply?.bagReading)reply=proposal(state,'bag',reply.bagReading);
+        reply=autoSave(state,reply);
 
         if(reply?.healthJob)ctx.waitUntil(processHealthJobs(env));
         reply.agenda=careAgenda(state);

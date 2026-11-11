@@ -49,6 +49,19 @@ export async function uploadResource(env,file){
  const id='u-'+uid(),key='originals/'+id;await env.RESOURCES.put(key,data,{httpMetadata:{contentType:type.mime}});
  try{const media=Object.hasOwn(mediaTypes,type.extension);const extracted=media?{text:'',status:'processing',note:'Automatic speech transcription is queued. You can leave this page and return to the pending uploads list.'}:await extractResource(env,name,data);const statements=[env.DB.prepare('INSERT INTO resource_uploads VALUES(?,?,?,?,?,?,?,?,?)').bind(id,key,name,type.mime,data.length,extracted.status,extracted.text,extracted.note,now())];if(media)statements.push(env.DB.prepare('INSERT INTO resource_transcription_jobs(upload_id) VALUES(?)').bind(id));await env.DB.batch(statements);return{id,fileName:name,mimeType:type.mime,size:data.length,text:extracted.text,extractionStatus:extracted.status,note:extracted.note};}catch(error){await env.RESOURCES.delete(key);throw error;}
 }
+// Reads the text again from the stored original for an upload that has none, such as a book
+// uploaded when the size limit was lower. Media files are transcribed by their own job instead.
+export async function reextractUpload(env,id){
+ const row=await env.DB.prepare('SELECT id,r2_key,file_name,mime_type,extraction_status,extracted_text,extraction_note FROM resource_uploads WHERE id=?').bind(id).first();
+ if(!row)throw new AppError('Upload not found.',404);
+ if(row.extraction_status==='needs_text'&&!row.extracted_text&&!/^(audio|video)\//.test(row.mime_type)){
+  const object=await env.RESOURCES.get(row.r2_key);if(!object)throw new AppError('The original file is no longer stored.',404);
+  const extracted=await extractResource(env,row.file_name,new Uint8Array(await object.arrayBuffer()));
+  await env.DB.prepare('UPDATE resource_uploads SET extraction_status=?,extracted_text=?,extraction_note=? WHERE id=?').bind(extracted.status,extracted.text,extracted.note,id).run();
+  Object.assign(row,{extraction_status:extracted.status,extracted_text:extracted.text,extraction_note:extracted.note});
+ }
+ const {r2_key,...shown}=row;return shown;
+}
 export async function materialInput(env,data){
  const kind=data?.kind||'link';if(!['link','document','video'].includes(kind))throw new AppError('Choose a link, document or video.');
  const textKind=data.textKind||'summary';if(!['summary','transcript','extracted'].includes(textKind))throw new AppError('Choose a summary, transcript or extracted text.');
