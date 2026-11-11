@@ -56,6 +56,7 @@ test('the assistant picks the pictures: its PICTURES line is removed and mapped 
  picked=takePictures('Check your skin daily.\n\nPICTURES: 1\n\nAsk your care team about anything you find.',catalogue);assert.equal(picked.content,'Check your skin daily.\n\nAsk your care team about anything you find.');assert.deepEqual(picked.figures.map(f=>f.label),['Figure 9']);
  picked=takePictures('No marker here. The pictures: 1 and 2 are nice.\nMore text.',catalogue);assert.equal(picked.figures,null);assert.match(picked.content,/More text\.$/);
  assert.deepEqual(takePictures('A\nPICTURES: 3',[]).figures,[]);
+ const {namedPictures}=await import('../worker/resource-figures.js');assert.deepEqual(namedPictures('As Figure 10 shows, lean forward. Table 190 is unrelated.',catalogue).map(f=>f.label),['Figure 10']);assert.deepEqual(namedPictures('Shoulder abduction and tax forms are mentioned without naming a picture.',catalogue),[]);
  const s=initialState({real:true});
  const prompt=agentPrompt(s,{sources:[],memories:[],pictures:catalogue});assert.match(prompt,/Pictures available from these resources, by number:\n1\. Figure 9: Pressure on Skin/);assert.match(prompt,/an unrelated picture is worse than none/);
  assert.doesNotMatch(agentPrompt(s,{sources:[],memories:[]}),/Pictures available/);

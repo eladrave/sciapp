@@ -112,6 +112,8 @@ Version 0.11.0 groups medication check-ins by scheduled time, supports all/some 
 
 Version 0.11.3 keeps the latest chat in view through delayed photo/card layout and offers occurrence-specific reminder dismissal by button or voice, without recording care or disabling future schedules. Version 0.11.2 preserves reported medication selections across interrupted questions, resumes only the missing timing/review step, and prevents competing or empty check-in cards. Check-ins can be hidden for 30 minutes without recording care. Version 0.11.1 makes doctor reports PDF only, with full-page original-resolution images and readable dated notes. It also replaces vague notification blocking messages with browser-reported permission states and account-scoped technical setup diagnostics. See [journal and reminders](docs/journal-and-reminders.md).
 
+Version 0.14.2 removes keyword matching as the fallback for pictures: when the assistant lists none, only a picture its answer names outright is shown.
+
 Version 0.14.1 reads the assistant's `PICTURES:` line wherever it appears in the reply, not only at the very end.
 
 Version 0.14.0 lets the assistant choose the pictures. An 18-question check across the published book showed every question answered from it, but keyword matching attached unrelated figures to about half the answers. The assistant now sees the captions of the pictures in the documents it is answering from and ends its answer with a `PICTURES:` line naming up to three (or none); the server removes the line and shows those pictures (`figureCatalogue`, `takePictures`). Keyword matching remains only as a fallback when the line is missing.

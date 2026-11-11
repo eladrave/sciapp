@@ -84,3 +84,9 @@ export function takePictures(content,catalogue,max=3){
  for(const n of (match[1].match(/\d+/g)||[]).map(Number)){const f=(catalogue||[]).find(x=>x.n===n);const key=f&&f.upload_id+':'+f.page;if(!f||seen.has(key))continue;seen.add(key);figures.push({id:f.id,url:'/api/resources/figures/'+f.id,label:f.label,caption:f.caption,page:f.page,width:f.width,height:f.height,title:f.title});if(figures.length>=max)break;}
  return {content:text.replace(pictureLine,'').replace(/\n{3,}/g,'\n\n').trim(),figures};
 }
+// Without a PICTURES line, only a picture the answer names outright ("see Figure 12") is shown.
+export function namedPictures(content,catalogue,max=3){
+ const figures=[],seen=new Set();
+ for(const f of catalogue||[]){const key=f.upload_id+':'+f.page;if(seen.has(key)||!mentions(content,f.label))continue;seen.add(key);figures.push({id:f.id,url:'/api/resources/figures/'+f.id,label:f.label,caption:f.caption,page:f.page,width:f.width,height:f.height,title:f.title});if(figures.length>=max)break;}
+ return figures;
+}
