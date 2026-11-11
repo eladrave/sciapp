@@ -69,7 +69,9 @@ async function store(env, id, state, version) {
   const r = await env.DB.prepare('UPDATE accounts SET state=?,version=version+1,updated_at=? WHERE id=? AND version=?').bind(JSON.stringify(state), now(), id, version).run();
   if (r.meta.changes !== 1) throw new AppError('Another action updated your records. Refresh and try again; this action was not saved.', 409);
 }
-async function mutate(env, id, fn) { for (let attempt = 0; attempt < 4; attempt++) { const { state, version } = await load(env, id); const reply = fn(state); state.messages.push(reply); try { await store(env, id, state, version); return { reply, state: publicState(state) }; } catch (e) { if (e.status !== 409 || attempt === 3) throw e; } } }
+// A short follow-up ("explain it", "tell me more") is searched together with the question before it.
+function retrievalQuery(state,text){if(text.length>=60)return text;const earlier=state.messages.filter(m=>m.role==='user').slice(-2,-1)[0];return earlier&&Date.now()-Date.parse(earlier.createdAt)<15*60000&&earlier.content.length>12?`${earlier.content.slice(0,500)} ${text}`:text;}
+async function mutate(env, id, fn) { for (let attempt = 0; attempt < 4; attempt++) { const { state, version } = await load(env, id); const reply = autoSave(state, fn(state)); state.messages.push(reply); try { await store(env, id, state, version); return { reply, state: publicState(state) }; } catch (e) { if (e.status !== 409 || attempt === 3) throw e; } } }
 async function user(request, env) {
   const pk = env.CLERK_PUBLISHABLE_KEY;
   if (pk && (request.headers.has('authorization') || /(?:^|;\s*)__session=/.test(request.headers.get('cookie') || ''))) {
@@ -100,7 +102,7 @@ export default {
       if (!configuredOrigins(env,url.origin).includes(url.origin))return json({error:'This hostname is not configured for SCIapp.'},421);
       const canonical=canonicalHome(request,env);
       if(canonical)return new Response(null,{status:302,headers:{...security,Location:canonical}});
-      if (path === '/api/health') {const {settings}=await aiConfiguration(env);return json({ status:'ok',version:'0.13.0',chatModel:settings.provider==='openai'?settings.chatModel:CHAT_MODEL,visionModel:settings.provider==='openai'?settings.visionModel:VISION_MODEL,provider:settings.provider,mode:'personal-beta' });}
+      if (path === '/api/health') {const {settings}=await aiConfiguration(env);return json({ status:'ok',version:'0.13.1',chatModel:settings.provider==='openai'?settings.chatModel:CHAT_MODEL,visionModel:settings.provider==='openai'?settings.visionModel:VISION_MODEL,provider:settings.provider,mode:'personal-beta' });}
       if (path === '/api/config' && request.method === 'GET') return json({ appOrigin:env.APP_ORIGIN||url.origin, clerkPublishableKey: env.CLERK_PUBLISHABLE_KEY || null, authEnvironment: env.CLERK_PUBLISHABLE_KEY?.startsWith('pk_live_') ? 'production' : 'development', pushPublicKey:env.VAPID_PUBLIC_KEY||null, mode: env.CLERK_PUBLISHABLE_KEY ? 'authenticated' : 'preview', features: { notifications: !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY),notificationDiagnostics:true, memory:retrievalReady(env), resources:retrievalReady(env), medications:true, photos: true, transcription: !!env.AI, speech: !!env.AI, voices:VOICES, defaultVoice:DEFAULT_VOICE, caregivers: 'drafts', healthSystems:!!env.HEALTH_TOKEN_KEY, healthConnect: false }, notice: 'Personal care beta. Medication and allergy records are user-entered. Notifications are reminders, not guaranteed clinical alarms. Caregiver invitations remain drafts.' });
       if (!path.startsWith('/api/')) {
         if (!['GET','HEAD'].includes(request.method)) return json({ error: 'Method not allowed.' },405);
@@ -121,7 +123,7 @@ export default {
         await env.DB.prepare('INSERT INTO sessions(token_hash,account_id,expires_at) VALUES (?,?,?)').bind(await hash(token),id,Date.now()+7*86400000).run();
         return json({ state: publicState((await load(env,id)).state) },200,{ 'Set-Cookie': `__Host-sciapp=${token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=604800` });
       }
-      if(path.startsWith('/api/admin/'))return await adminRoute(request,env,ctx,{json,bodyJSON:r=>bodyJSON(r,4200000),form,version:'0.13.0'});
+      if(path.startsWith('/api/admin/'))return await adminRoute(request,env,ctx,{json,bodyJSON:r=>bodyJSON(r,4200000),form,version:'0.13.1'});
       if(path==='/api/health-systems/callback'&&request.method==='GET'){
         if(!env.HEALTH_TOKEN_KEY)throw new AppError('Health connections are not configured.',503);
         const result=await completeConnection(env,request);return new Response(null,{status:303,headers:{...security,Location:env.APP_ORIGIN+'/?health='+(result.cancelled?'cancelled':'connected'),'Set-Cookie':result.cookie}});
@@ -206,10 +208,11 @@ export default {
         if(reply){}
         else if(env.AI||env.OPENAI_API_KEY){
           await limit(request,env,'ai',150);
-          try{let context={sources:[]}; const health=await healthContext(env,id);try{context=await retrieveContext(env,id,text);}catch{console.warn(JSON.stringify({event:'retrieval_unavailable'}));}
-            reply=await runCareAgent(env,id,state,text,{memories:context.memories||[],sources:(context.sources||[]).map(s=>({...s,text:s.body})),photoData,photoId:data.photoId,health});
+          try{let context={sources:[]}; const health=await healthContext(env,id);try{context=await retrieveContext(env,id,retrievalQuery(state,text));}catch{console.warn(JSON.stringify({event:'retrieval_unavailable'}));}
+            const agentSources=(context.sources||[]).map(s=>({...s,text:s.body}));
+            reply=await runCareAgent(env,id,state,text,{memories:context.memories||[],sources:agentSources,photoData,photoId:data.photoId,health,search:async query=>{const found=await retrieveContext(env,id,query);return {memories:found.memories||[],sources:(found.sources||[]).map(s=>({...s,text:s.body}))};}});
             // An educational answer drawn from a published document may show the figures it relates to.
-            if(reply?.sources?.length&&!reply.proposal&&!reply.journalResult&&!data.photoId){try{const figures=await figuresForReply(env,text,context.sources,reply.content);if(figures.length)reply.figures=figures;}catch{console.warn(JSON.stringify({event:'resource_figures_unavailable'}));}}
+            if(reply?.sources?.length&&!reply.proposal&&!reply.journalResult&&!data.photoId){try{const figures=await figuresForReply(env,text,agentSources,reply.content);if(figures.length)reply.figures=figures;}catch{console.warn(JSON.stringify({event:'resource_figures_unavailable'}));}}
           }catch(error){if(error instanceof AppError){reply=message('assistant',error.message,{options:['Set catheter reminders','Log catheterization']});}else{console.warn(JSON.stringify({event:'conversation_model_unavailable'}));reply=offlineCareReply(state,text,photoData,data.photoId);reply.content='I am using limited offline controls because the AI request did not complete. '+reply.content;}}
         }else reply=offlineCareReply(state,text,photoData,data.photoId);
         if(reply?.bagReading)reply=proposal(state,'bag',reply.bagReading);

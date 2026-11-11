@@ -78,21 +78,39 @@ export async function processIndexJobs(env,max=4){
 export async function publishedFallback(env,text){
  const found=[];for(const source of retrieve(text)){const row=await env.DB.prepare("SELECT status FROM resource_publication WHERE source_id=?").bind('seed-'+source.id).first();if(!row||row.status==='published')found.push(source);}return found;
 }
+// A matched 500-character chunk is rarely a whole thought. Each match is widened with the chunks
+// before and after it, and matches that touch are merged, so the assistant reads full passages.
+export async function widenPassages(env,sources,maxPassages=6){
+ const groups=new Map();
+ for(const source of sources){const parts=String(source.chunkId||'').match(/^(.*)-(\d+)$/);if(!parts){groups.set(Symbol(),{source,indexes:null});continue;}const group=groups.get(source.id)||{source,indexes:new Map()};group.indexes.set(Number(parts[2]),source.score);if(source.score>group.source.score)group.source=source;groups.set(source.id,group);}
+ const passages=[];
+ for(const {source,indexes} of groups.values()){
+  if(!indexes){passages.push(source);continue;}
+  const wanted=new Set();for(const index of indexes.keys())for(const near of [index-1,index,index+1])if(near>=0)wanted.add(near);
+  const ids=[...wanted].sort((a,b)=>a-b),rows=new Map();
+  for(let i=0;i<ids.length;i+=50){const slice=ids.slice(i,i+50);const found=await env.DB.prepare(`SELECT id,body FROM retrieval_chunks WHERE deleted_at IS NULL AND id IN (${slice.map(()=>'?').join(',')})`).bind(...slice.map(n=>`${source.id}-${n}`)).all();for(const row of found.results)rows.set(Number(row.id.slice(source.id.length+1)),row.body);}
+  let run=[];const flush=()=>{if(!run.length)return;const score=Math.max(...run.map(n=>indexes.get(n)||0));const {chunkId,...rest}=source;passages.push({...rest,body:run.map(n=>rows.get(n)).join(' '),score});run=[];};
+  for(const n of ids){if(!rows.has(n))continue;if(run.length&&n!==run.at(-1)+1)flush();run.push(n);if(run.length>=6)flush();}
+  flush();
+ }
+ return passages.sort((a,b)=>b.score-a.score).slice(0,maxPassages).map(({chunkId,...rest})=>rest);
+}
 export async function retrieveContext(env,id,text){
  if(!retrievalReady(env))return {memories:[],sources:[]};
  const settings=id.startsWith('clerk:')?await memorySettings(env,id):{enabled:0};
  const row=await env.DB.prepare("SELECT value_json FROM system_settings WHERE id='general'").first();const threshold=row?JSON.parse(row.value_json).retrievalThreshold:0.65;
  const fallback=await publishedFallback(env,text);let vector;try{vector=await embed(env,text.slice(0,2000));}catch{return {memories:[],sources:fallback.map(s=>({...s,body:s.text}))};}
- const searches=await Promise.allSettled([settings.enabled?env.PERSONAL_MEMORY.query(vector,{namespace:await ownerNamespace(id),topK:5,returnMetadata:'none'}):Promise.resolve({matches:[]}),env.SHARED_RESOURCES.query(vector,{namespace:'shared',topK:5,returnMetadata:'none'})]);
+ const searches=await Promise.allSettled([settings.enabled?env.PERSONAL_MEMORY.query(vector,{namespace:await ownerNamespace(id),topK:5,returnMetadata:'none'}):Promise.resolve({matches:[]}),env.SHARED_RESOURCES.query(vector,{namespace:'shared',topK:8,returnMetadata:'none'})]);
  const result={memories:[],sources:[]};
  for(let i=0;i<searches.length;i++){
   if(searches[i].status!=='fulfilled')continue;
   for(const match of searches[i].value.matches||[]){
    if(match.score<threshold)continue;
    const row=await env.DB.prepare('SELECT c.body,s.id,s.title,s.url,s.created_at,m.kind,m.text_kind,m.upload_id FROM retrieval_chunks c JOIN retrieval_sources s ON s.id=c.source_id LEFT JOIN resource_materials m ON m.source_id=s.id WHERE c.id=? AND c.scope=? AND (?=\'shared\' OR c.account_id=?) AND c.deleted_at IS NULL AND s.deleted_at IS NULL AND (c.scope=\'personal\' OR NOT EXISTS(SELECT 1 FROM resource_publication WHERE source_id=s.id AND status!=\'published\'))').bind(match.id,i?'shared':'personal',i?'shared':'personal',id).first();
-   if(row)result[i?'sources':'memories'].push({...row,score:match.score});
+   if(row)result[i?'sources':'memories'].push({...row,score:match.score,...(i?{chunkId:match.id}:{})});
   }
  }
+ result.sources=await widenPassages(env,result.sources);
  for(const source of fallback)if(!result.sources.some(s=>s.url===source.url))result.sources.push({...source,body:source.text});
  return result;
 }
