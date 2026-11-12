@@ -52,7 +52,7 @@ async function api(path, options = {}) {
  } finally { pendingRequests.delete(controller); }
 }
 function setBusy(value) { busy = value; ui.help.disabled=value||uploadBusy||recording; ui.thinking.hidden = !value; ui.send.disabled = value || uploadBusy || recording; ui.message.readOnly = value; ui.composer.setAttribute('aria-busy',String(value)); ui.photo.disabled = value || uploadBusy; ui['take-photo'].disabled = ui['upload-image'].disabled = value || uploadBusy; if(value || uploadBusy)closePhotoOptions(); document.querySelectorAll('[data-action]').forEach(el => { el.disabled = value; }); document.querySelectorAll('.quick-replies button,[data-answer-control]').forEach(el=>{el.disabled=value||uploadBusy||recording||el.dataset.staleQuestion==='true';}); }
-function showApp(next) { const healthResult=new URL(location.href).searchParams.get('health');if(healthResult){error(healthResult==='connected'?'Health system authorized. Ask to sync your health records.':'Health system connection cancelled.');history.replaceState(null,'',location.pathname);} ui.welcome.hidden = true; ui.app.hidden = false; update(next); resumeHandsFree(); refreshNotificationStatus(); if (pendingInvite()) switchPage('Settings');  if (new URL(location.href).searchParams.get('page') === 'Today') switchPage('Today'); }
+function showApp(next) { const healthResult=new URL(location.href).searchParams.get('health');if(healthResult){error(healthResult==='connected'?'Health system authorized. Ask to sync your health records.':'Health system connection cancelled.');history.replaceState(null,'',location.pathname);} ui.welcome.hidden = true; ui.app.hidden = false; update(next); resumeHandsFree(); refreshNotificationStatus(); if (new URL(location.href).searchParams.has('page')) history.replaceState(null,'',location.pathname); if (pendingInvite()) switchPage('Settings'); }
 function update(next) {
  if (next) {
   if (state && next.settings?.muted !== state.settings?.muted && typeof next.settings?.muted === 'boolean') setMute(next.settings.muted);
@@ -673,7 +673,7 @@ catch(e) { ui.welcome.hidden = false; ui['welcome-error'].textContent = `Could n
 window.addEventListener('sciapp:signed-in',async () => { clearAccountWork(); ui.account.hidden = false; ui.account.textContent = 'Sign out'; try { showApp(await api('/api/state')); } catch(e) { ui['welcome-error'].textContent = e.message; } });
 window.addEventListener('pagehide',() => { stopHandsFree(); revokeHistoricalPhotos(); recordStream?.getTracks().forEach(track => track.stop()); silence(); });
 
-if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message',event=>{if(event.data?.type==='sciapp:open-today' && state){switchPage('Today');api('/api/state').then(update).catch(e=>error(e.message));}});
+if ('serviceWorker' in navigator) navigator.serviceWorker.addEventListener('message',event=>{if(['sciapp:open','sciapp:open-today'].includes(event.data?.type) && state){switchPage('Conversation',{latest:true});api('/api/state').then(update).catch(e=>error(e.message));}});
 
 watchNotificationPermission(()=>{if(state&&!notificationBusy)refreshNotificationStatus();});
 

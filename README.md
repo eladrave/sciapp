@@ -112,6 +112,8 @@ Version 0.11.0 groups medication check-ins by scheduled time, supports all/some 
 
 Version 0.11.3 keeps the latest chat in view through delayed photo/card layout and offers occurrence-specific reminder dismissal by button or voice, without recording care or disabling future schedules. Version 0.11.2 preserves reported medication selections across interrupted questions, resumes only the missing timing/review step, and prevents competing or empty check-in cards. Check-ins can be hidden for 30 minutes without recording care. Version 0.11.1 makes doctor reports PDF only, with full-page original-resolution images and readable dated notes. It also replaces vague notification blocking messages with browser-reported permission states and account-scoped technical setup diagnostics. See [journal and reminders](docs/journal-and-reminders.md).
 
+Version 0.15.2 always opens the app on the conversation. Tapping a reminder notification used to open the Today page and leave that choice in the address, so every later reload reopened Today; a reminder tap now opens the conversation, where the due check-in is shown, and the leftover address is cleared.
+
 Version 0.15.1 always shows Call 911 on the emergency panel. A number saved in Settings appears as a second call button below it, never in place of 911.
 
 Version 0.15.0 adds an emergency panel under the autonomic dysreflexia help: a large Call button for the emergency number (911 unless the user sets another in Settings), the saved home address, and the current location read on the device (latitude, longitude, accuracy, with a Maps link). The location is never sent to the server. Home address and emergency number are new optional profile fields.
